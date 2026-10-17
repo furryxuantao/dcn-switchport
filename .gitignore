@@ -1,0 +1,29 @@
+# Electron 依赖与打包产物（体积巨大，不入库）
+electron/node_modules/
+electron/release/
+electron/out/
+electron/dist/
+npm-debug.log*
+yarn-error.log*
+
+# 本地虚拟环境 / 依赖
+.venv/
+node_modules/
+simtest/node_modules/
+
+# 打包产物
+*.exe
+*.msi
+*.dmg
+*.AppImage
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.log
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 运行时生成
+*.local
