@@ -44,10 +44,11 @@
           "target": "portable",
           "arch": ["x64"]
         }
-      ]
+      ],
+      "artifactName": "DCN-Simulator-${version}-portable.${ext}"
     },
     "portable": {
-      "artifactName": "DCN网络模拟器-${version}-绿色版.exe"
+      "artifactName": "DCN-Simulator-${version}-portable.${ext}"
     }
   }
 }

@@ -131,7 +131,12 @@ function makePorts(type) {
       name: name, shutdown: false, stpBlock: false,
       mode: "access", accessVlan: 1, trunkAllowed: null, // null=all
       portSecurity: { enabled: false, max: 1, staticMacs: [], violation: "shutdown", recovery: 0, violated: false },
-      aggGroup: 0, mirrorRole: null
+      aggGroup: 0, mirrorRole: null,
+      trust: false,            // DHCP Snooping 信任端口
+      isolateGroup: 0,         // 端口隔离组号，0=不隔离
+      qosPrio: 0,              // 802.1p 优先级 0~7
+      loopGuard: false,        // 环路保护
+      BPDUGuard: false
     };
   }
   if (type === "l2" || type === "l3") {
@@ -172,7 +177,18 @@ function createDevice(type, name, x, y) {
     rip: { enabled: false, proc: 1, version: 1, autoSummary: false, enabledIfs: {}, passiveIfs: {}, networks: [] },
     ospf: { enabled: false, proc: 1, routerId: null, networks: [] }, // {net, mask, area}
     configLocked: false,
-    startupConfig: null
+    startupConfig: null,
+    // ---- 二层安全与控制平面（DCN 企业级交换机特性） ----
+    dhcpSnooping: { enabled: false, perVlan: {}, trustedPorts: [], bindings: {} },
+    //   bindings: mac -> {ip, port, vlan}
+    igmpSnooping: { enabled: false, groups: {}, version: 3 }, // groups: vlan -> {groupAddr:{ports:[],version}}
+    arpInspection: { enabled: false, perVlan: {} },
+    staticMac: {},      // portName -> [mac...]
+    macLimit: 0,        // MAC 表条目上限，0=不限
+    agingTime: 300,     // MAC 老化时间（秒）
+    lldp: { enabled: false },
+    snmp: { enabled: false, community: null, contact: null, location: null },
+    loopGuard: { enabled: false }
   };
   if (type === "l2" || type === "l3" || type === "router") {
     // 默认所有access口在vlan1
@@ -589,11 +605,19 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
   // 目标是本机自己的IP
   if (deviceIpList(srcDev).indexOf(dstIp) >= 0) return { ok: true, path: [{ dev: srcDev.hostname, ip: dstIp, via: "local" }], reason: "本机", latency: measurePing(allDevices, links, srcDev, dstIp, stpInfo) };
   var visited = {}, queue = [];
-  function push(devId, vlan, path) {
+  // 端口隔离索引：只有配置了隔离口的设备才需要按「入端口」细分 BFS 状态，
+  // 否则退化为 devId|vlan 的快路径，保证大拓扑性能不受影响
+  var isoDevs = {};
+  allDevices.forEach(function (d) {
+    var has = Object.keys(d.ports).some(function (pn) { return d.ports[pn].isolateGroup; });
+    if (has) isoDevs[d.id] = true;
+  });
+  function push(devId, vlan, path, fromPort) {
     var k = devId + "|" + (vlan === null || vlan === undefined ? "-" : vlan);
+    if (isoDevs[devId]) k += "|" + (fromPort || "-");
     if (visited[k]) return false;
     visited[k] = true;
-    queue.push({ devId: devId, vlan: vlan, path: path });
+    queue.push({ devId: devId, vlan: vlan, path: path, fromPort: fromPort || null });
     return true;
   }
   // 起点：PC 从所接端口进入 vlan；交换机/路由 CLI 发起为无标签
@@ -602,7 +626,7 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     if (!snb || !snb.dev) return { ok: false, reason: "本机未连线", path: [] };
     if (!linkOperUp(allDevices, snb.link, stpInfo)) return { ok: false, reason: "本机链路down", path: [] };
     var svlan = l2ingress(snb.dev, snb.port, null);
-    push(snb.dev.id, svlan, [{ dev: srcDev.hostname, via: "src" }, { dev: snb.dev.hostname, via: srcDev.hostname + "->" + snb.port }]);
+    push(snb.dev.id, svlan, [{ dev: srcDev.hostname, via: "src" }, { dev: snb.dev.hostname, via: srcDev.hostname + "->" + snb.port }], snb.port);
   } else {
     push(srcDev.id, null, [{ dev: srcDev.hostname, via: "src" }]);
   }
@@ -620,7 +644,7 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
       var nb2 = firstLinkNeighbor(allDevices, links, dev);
       if (!nb2 || !nb2.dev || !linkOperUp(allDevices, nb2.link, stpInfo)) continue;
       var v2 = l2ingress(nb2.dev, nb2.port, cur.vlan);
-      push(nb2.dev.id, v2, cur.path.concat([{ dev: nb2.dev.hostname, via: dev.hostname + "->" + nb2.port }]));
+      push(nb2.dev.id, v2, cur.path.concat([{ dev: nb2.dev.hostname, via: dev.hostname + "->" + nb2.port }]), nb2.port);
       continue;
     }
     if (dev.type === "l2") {
@@ -631,19 +655,21 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
         var pn = ports[i];
         if (!portAllows(dev, pn, vlan)) continue;
         if (isStpBlocked(dev, pn, stpInfo)) continue;
+        // 端口隔离：入端口与出端口同属隔离组 → 丢弃（真机行为）
+        if (cur.fromPort && isIsolated(dev, cur.fromPort, pn)) continue;
         var nb = neighborOnLink(allDevices, links, dev.id, pn);
         if (!nb || !nb.dev || !linkOperUp(allDevices, nb.link, stpInfo)) continue;
         if (isStpBlocked(nb.dev, nb.port, stpInfo)) continue;
         var nd = nb.dev;
         if (nd.type === "pc") {
           // 网卡不认 tag：access 口只会发出本 vlan，不会串域；trunk 直连 PC 则放行
-          push(nd.id, null, cur.path.concat([{ dev: nd.hostname, via: dev.hostname + ":" + pn }]));
+          push(nd.id, null, cur.path.concat([{ dev: nd.hostname, via: dev.hostname + ":" + pn }]), nb.port);
         } else if (nd.type === "l2" || nd.type === "l3") {
           if (!portAllows(nd, nb.port, vlan)) continue;
-          push(nd.id, l2ingress(nd, nb.port, vlan), cur.path.concat([{ dev: nd.hostname, via: dev.hostname + ":" + pn + "(vlan" + vlan + ")" }]));
+          push(nd.id, l2ingress(nd, nb.port, vlan), cur.path.concat([{ dev: nd.hostname, via: dev.hostname + ":" + pn + "(vlan" + vlan + ")" }]), nb.port);
         } else {
           // 路由器口剥除 tag
-          push(nd.id, null, cur.path.concat([{ dev: nd.hostname, via: dev.hostname + ":" + pn }]));
+          push(nd.id, null, cur.path.concat([{ dev: nd.hostname, via: dev.hostname + ":" + pn }]), nb.port);
         }
       }
       continue;
@@ -667,7 +693,7 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
           if (!allows) continue;
           if (isStpBlocked(dev, lp, stpInfo)) continue;
           if ((rp.dev.type === "l2" || rp.dev.type === "l3") && (!portAllows(rp.dev, rp.port, vid) || isStpBlocked(rp.dev, rp.port, stpInfo))) continue;
-          push(rp.dev.id, l2ingress(rp.dev, rp.port, vid), cur.path.concat([{ dev: rp.dev.hostname, via: dev.hostname + ":" + lp + "(vlan" + vid + ")" }]));
+          push(rp.dev.id, l2ingress(rp.dev, rp.port, vid), cur.path.concat([{ dev: rp.dev.hostname, via: dev.hostname + ":" + lp + "(vlan" + vid + ")" }]), rp.port);
         }
       } else {
         // 物理直连口：无标签出去
@@ -676,7 +702,7 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
           var nb3 = neighborOnLink(allDevices, links, dev.id, candPorts[c]);
           if (!nb3 || !nb3.dev || !linkOperUp(allDevices, nb3.link, stpInfo)) continue;
           var nv3 = (nb3.dev.type === "l2" || nb3.dev.type === "l3") ? l2ingress(nb3.dev, nb3.port, null) : null;
-          push(nb3.dev.id, nv3, cur.path.concat([{ dev: nb3.dev.hostname, via: dev.hostname + ":" + candPorts[c] }]));
+          push(nb3.dev.id, nv3, cur.path.concat([{ dev: nb3.dev.hostname, via: dev.hostname + ":" + candPorts[c] }]), nb3.port);
         }
       }
     } else {
@@ -691,7 +717,7 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
         var hit = (nhDev && other.id === nhDev.id) || deviceIpList(other).indexOf(nextHopIp) >= 0;
         if (!hit) continue;
         var nv4 = (other.type === "l2" || other.type === "l3") ? l2ingress(other, ll.a.dev === dev.id ? ll.b.port : ll.a.port, null) : null;
-        if (push(other.id, nv4, cur.path.concat([{ dev: other.hostname, via: dev.hostname + "->" + nextHopIp }]))) found = true;
+        if (push(other.id, nv4, cur.path.concat([{ dev: other.hostname, via: dev.hostname + "->" + nextHopIp }]), ll.a.dev === dev.id ? ll.b.port : ll.a.port)) found = true;
       }
       if (!found) continue; // 下一跳不可达
     }
@@ -723,6 +749,19 @@ function diagnoseFail(allDevices, links, srcDev, dstIp, stpInfo) {
     var sv = edgeVlan(srcDev, allDevices, links), tv = edgeVlan(target, allDevices, links);
     if (sv !== null && tv !== null && sv !== "trunk" && tv !== "trunk" && sv !== tv)
       return "VLAN不一致（源vlan" + sv + "，目标vlan" + tv + "）：需同VLAN同网段";
+  }
+  // 端口隔离：源与目的所接的交换机端口都开了隔离 → 互相隔离
+  var sn = srcDev.type === "pc" ? firstLinkNeighbor(allDevices, links, srcDev) : null;
+  var tn = target.type === "pc" ? firstLinkNeighbor(allDevices, links, target) : null;
+  var pairs = [];
+  if (sn && sn.dev && sn.dev.ports && sn.dev.ports[sn.port]) pairs.push([sn.dev, sn.port]);
+  if (tn && tn.dev && tn.dev.ports && tn.dev.ports[tn.port]) pairs.push([tn.dev, tn.port]);
+  for (var pi = 0; pi < pairs.length; pi++) {
+    for (var pj = pi + 1; pj < pairs.length; pj++) {
+      if (pairs[pi][0] === pairs[pj][0] && isIsolated(pairs[pi][0], pairs[pi][1], pairs[pj][1]))
+        return "端口隔离阻断：" + pairs[pi][0].hostname + " 的 " + pairs[pi][1] + " 与 " +
+          pairs[pj][1] + " 同为隔离口，彼此不能通信（switchport isolate group）";
+    }
   }
   // 检查端口shutdown / 安全违例 / STP阻断
   var badPorts = [];
@@ -956,6 +995,188 @@ function showPortSecurity(dev, portFilter) {
   if (lines.length === 1) return "% No port-security enabled";
   return lines.join("\n");
 }
+// ================= 二层安全与控制平面 =================
+function portLabel(pn) { return pn.indexOf("e") === 0 ? "Ethernet" + pn.substr(1) : pn; }
+
+// --- DHCP Snooping ---
+function showDhcpSnooping(dev) {
+  var L = [];
+  L.push("DHCP Snooping : " + (dev.dhcpSnooping.enabled ? "enabled" : "disabled"));
+  if (!dev.dhcpSnooping.enabled) return L.join("\n");
+  var vks = Object.keys(dev.dhcpSnooping.perVlan);
+  L.push("");
+  L.push("Vlan     Rate(L/s)   Bindings");
+  if (!vks.length) L.push("  （未配置速率限制）");
+  vks.forEach(function (v) {
+    var c = dev.dhcpSnooping.perVlan[v];
+    L.push("  " + String(v).padEnd(8, " ") + String(c.rate || "unlimited").padEnd(12, " ") +
+      (c.bindings === undefined ? 0 : c.bindings));
+  });
+  L.push("");
+  L.push("Trusted ports : " + (dev.dhcpSnooping.trustedPorts.length ? dev.dhcpSnooping.trustedPorts.join(", ") : "(none)"));
+  var bks = Object.keys(dev.dhcpSnooping.bindings);
+  if (bks.length) {
+    L.push("");
+    L.push("MAC Address          IP Address       Port        VLAN");
+    bks.forEach(function (m) {
+      var b = dev.dhcpSnooping.bindings[m];
+      L.push("  " + m.padEnd(20, " ") + b.ip.padEnd(16, " ") + portLabel(b.port).padEnd(11, " ") + b.vlan);
+    });
+  }
+  return L.join("\n");
+}
+// DHCP 欺骗检测：非信任端口收到与既有绑定不符的 DHCP 报文
+function checkDhcpViolation(dev, port, srcMac, srcIp) {
+  if (!dev.dhcpSnooping.enabled) return false;
+  if (dev.ports[port] && dev.ports[port].trust) return false;
+  var ex = dev.dhcpSnooping.bindings[srcMac];
+  if (ex && ex.ip !== srcIp) return true;      // 同一 MAC 伪造不同 IP
+  var dup = Object.keys(dev.dhcpSnooping.bindings).some(function (m) {
+    return m !== srcMac && dev.dhcpSnooping.bindings[m].ip === srcIp;
+  });
+  return dup;                                   // 同一 IP 被不同 MAC 占用
+}
+
+// --- IGMP Snooping ---
+function learnIgmp(dev, vlan, group, port, version) {
+  if (!dev.igmpSnooping.enabled) return;
+  var V = String(vlan);
+  if (!dev.igmpSnooping.groups[V]) dev.igmpSnooping.groups[V] = {};
+  var g = dev.igmpSnooping.groups[V][group];
+  if (!g) g = dev.igmpSnooping.groups[V][group] = { ports: [], version: version || 3 };
+  if (g.ports.indexOf(port) < 0) g.ports.push(port);
+}
+function showIgmpSnooping(dev) {
+  var L = [];
+  L.push("IGMP Snooping : " + (dev.igmpSnooping.enabled ? "enabled" : "disabled"));
+  L.push("IGMP Version  : " + dev.igmpSnooping.version);
+  if (!dev.igmpSnooping.enabled) return L.join("\n");
+  var vks = Object.keys(dev.igmpSnooping.groups);
+  if (!vks.length) { L.push(""); L.push("% 组播表为空（尚无 IGMP 报文）"); return L.join("\n"); }
+  L.push("");
+  L.push("VLAN   Group Address        Ports                          Version");
+  vks.forEach(function (v) {
+    var gk = Object.keys(dev.igmpSnooping.groups[v]);
+    if (!gk.length) return;
+    gk.forEach(function (g) {
+      var it = dev.igmpSnooping.groups[v][g];
+      L.push("  " + String(v).padEnd(6, " ") + g.padEnd(22, " ") +
+        (it.ports.map(portLabel).join(",") || "(none)").padEnd(31, " ") + "v" + it.version);
+    });
+  });
+  return L.join("\n");
+}
+
+// --- 动态 ARP 检测 DAI ---
+function showArpInspection(dev) {
+  var L = [];
+  L.push("Dynamic ARP Inspection : " + (dev.arpInspection.enabled ? "enabled" : "disabled"));
+  if (!dev.arpInspection.enabled) return L.join("\n");
+  L.push("");
+  L.push("VLAN     Status");
+  var ks = Object.keys(dev.arpInspection.perVlan);
+  if (!ks.length) L.push("  （未配置 VLAN 范围）");
+  ks.forEach(function (v) {
+    L.push("  " + String(v).padEnd(8, " ") + dev.arpInspection.perVlan[v]);
+  });
+  return L.join("\n");
+}
+// ARP 欺骗检测：需 DAI 开启且该 VLAN 已启用，否则放行
+function checkArpViolation(dev, vlan, ipMacPairs) {
+  if (!dev.arpInspection.enabled) return false;
+  var v = String(vlan);
+  if (!dev.arpInspection.perVlan[v]) return false;
+  var binds = dev.dhcpSnooping.bindings || {};
+  return ipMacPairs.some(function (p) {
+    var b = binds[p.mac];
+    if (!b) return false;                      // 无 DHCP 绑定信息则不判违例
+    return b.ip !== p.ip;                      // MAC/IP 不匹配 → 欺骗
+  });
+}
+
+// --- 端口隔离 ---
+// DCN 真机语义：凡是开启了端口隔离的接入口，彼此之间不能通信（可与未隔离的上联口通信）
+function isIsolated(dev, p1, p2) {
+  if (!p1 || p1 === p2) return false;
+  var a = dev.ports[p1], b = dev.ports[p2];
+  if (!a || !b) return false;
+  if (a.shutdown || b.shutdown) return false;
+  return !!(a.isolateGroup && b.isolateGroup);
+}
+function showPortIsolate(dev) {
+  var groups = {};
+  Object.keys(dev.ports).forEach(function (pn) {
+    var g = dev.ports[pn].isolateGroup;
+    if (g) { if (!groups[g]) groups[g] = []; groups[g].push(pn); }
+  });
+  var ks = Object.keys(groups);
+  if (!ks.length) return "% 端口隔离未配置（switchport isolate group N 开启）";
+  var L = ["Port Isolation Groups:", ""];
+  ks.forEach(function (g) {
+    L.push("  Group " + g + " : " + groups[g].map(portLabel).join(", "));
+    L.push("      同组端口之间相互隔离，不能通信");
+  });
+  return L.join("\n");
+}
+
+// --- QoS 优先级 ---
+function showQosPriority(dev) {
+  var ks = Object.keys(dev.ports).filter(function (p) { return dev.ports[p].qosPrio; });
+  if (!ks.length) return "% 未配置端口优先级（switchport priority N）";
+  var L = ["Port                Priority  Description"];
+  ks.forEach(function (pn) {
+    var p = dev.ports[pn].qosPrio;
+    var desc = p >= 6 ? "网络控制" : p >= 4 ? "视频" : p >= 2 ? "语音" : p >= 1 ? "关键数据" : "普通数据";
+    L.push("  " + portLabel(pn).padEnd(19, " ") + String(p).padEnd(10, " ") + desc);
+  });
+  return L.join("\n");
+}
+
+// --- 环路保护 Loop Guard ---
+function showLoopGuard(dev) {
+  var ks = Object.keys(dev.ports).filter(function (p) { return dev.ports[p].loopGuard; });
+  if (!dev.loopGuard.enabled) return "% Loop Guard : disabled（全局 switchport loop-guard enable）";
+  if (!ks.length) return "Loop Guard : enabled\n% 尚未指定受保护端口（接口下 loop-guard enable）";
+  return "Loop Guard : enabled\n受保护端口 : " + ks.map(portLabel).join(", ") +
+    "\n  接入口收到 BPDU 将被自动 shutdown，防止误接形成环路";
+}
+
+// --- 静态 MAC / 表项上限 / 老化时间 ---
+function showStaticMac(dev) {
+  var ks = Object.keys(dev.staticMac).filter(function (p) { return dev.staticMac[p].length; });
+  if (!ks.length) return "% 无静态 MAC 绑定（mac-address static X 接口 Y）";
+  var L = ["Port                 MAC Address"];
+  ks.forEach(function (pn) {
+    dev.staticMac[pn].forEach(function (m) {
+      L.push("  " + portLabel(pn).padEnd(20, " ") + m);
+    });
+  });
+  return L.join("\n");
+}
+function showMacAging(dev) {
+  var L = [];
+  L.push("MAC Aging Time : " + dev.agingTime + " 秒");
+  L.push("MAC Table Limit: " + (dev.macLimit ? dev.macLimit + " 条" : "unlimited"));
+  L.push("Learned entries: " + Object.keys(dev.macTable).length + " 条");
+  return L.join("\n");
+}
+// --- LLDP / SNMP ---
+function showLldp(dev) {
+  if (!dev.lldp.enabled) return "% LLDP : disabled";
+  var L = ["LLDP : enabled", "", "Chassis ID        Local Port        Neighbor"];
+  var n = 0;
+  Object.keys(dev.ports).forEach(function (pn) { if (dev.ports[pn].shutdown) return; n++; });
+  L.push("  （已启用，本机 " + n + " 个端口参与 LLDP 通告）");
+  return L.join("\n");
+}
+function showSnmp(dev) {
+  if (!dev.snmp.enabled) return "% SNMP Agent : disabled";
+  var L = ["SNMP Agent : enabled", "Community : " + (dev.snmp.community || "(未设置)")];
+  if (dev.snmp.contact) L.push("Contact    : " + dev.snmp.contact);
+  if (dev.snmp.location) L.push("Location   : " + dev.snmp.location);
+  return L.join("\n");
+}
+
 function showRunningConfig(dev) {
   var lines = ["Current configuration:", "!", "hostname " + dev.hostname];
   if (dev.enablePassword) lines.push("enable password level 15 " + dev.enablePassword);
@@ -992,6 +1213,51 @@ function showRunningConfig(dev) {
     lines.push("spanning-tree"); lines.push("spanning-tree mode " + dev.stp.mode);
     Object.keys(dev.stp.instances).forEach(function (k) { lines.push("spanning-tree mst configuration"); });
   }
+  // ---- 二层安全与控制平面 ----
+  if (dev.dhcpSnooping.enabled) {
+    lines.push("ip dhcp snooping");
+    dev.dhcpSnooping.trustedPorts.forEach(function (p) {
+      lines.push("interface " + p); lines.push(" ip dhcp snooping trust"); lines.push("exit");
+    });
+    Object.keys(dev.dhcpSnooping.perVlan).forEach(function (v) {
+      var c = dev.dhcpSnooping.perVlan[v];
+      lines.push("vlan " + v);
+      lines.push(" ip dhcp snooping rate " + (c.rate || "unlimited"));
+      lines.push("exit");
+    });
+  }
+  if (dev.igmpSnooping.enabled) { lines.push("ip igmp snooping"); lines.push("ip igmp version " + dev.igmpSnooping.version); }
+  if (dev.arpInspection.enabled) {
+    lines.push("ip arp inspection");
+    Object.keys(dev.arpInspection.perVlan).forEach(function (v) { lines.push(" ip arp inspection vlan " + v); });
+  }
+  if (dev.loopGuard.enabled) lines.push("switchport loop-guard enable");
+  if (dev.lldp.enabled) lines.push("lldp enable");
+  if (dev.snmp.enabled) {
+    lines.push("snmp-server enable");
+    if (dev.snmp.community) lines.push("snmp-server community " + dev.snmp.community + " ro");
+    if (dev.snmp.contact) lines.push("snmp-agent sys-contact " + dev.snmp.contact);
+    if (dev.snmp.location) lines.push("snmp-agent sys-location " + dev.snmp.location);
+  }
+  if (dev.agingTime !== 300) lines.push("mac-address aging-time " + dev.agingTime);
+  if (dev.macLimit) lines.push("mac-address maximum " + dev.macLimit);
+  // 静态 MAC 与端口级配置
+  Object.keys(dev.staticMac).forEach(function (pn) {
+    dev.staticMac[pn].forEach(function (m) {
+      lines.push("mac-address static " + m + " interface " + pn);
+    });
+  });
+  Object.keys(dev.ports).forEach(function (pn) {
+    var p = dev.ports[pn];
+    var extra = [];
+    if (p.isolateGroup) extra.push("switchport isolate group " + p.isolateGroup);
+    if (p.qosPrio) extra.push("switchport priority " + p.qosPrio);
+    if (p.loopGuard) extra.push("loop-guard enable");
+    if (!extra.length) return;
+    lines.push("interface " + pn);
+    extra.forEach(function (e) { lines.push(" " + e); });
+    lines.push("exit");
+  });
   lines.push("!");
   lines.push("end");
   return lines.join("\n");
@@ -1039,7 +1305,15 @@ var api = {
   learnMac: learnMac, deviceIpList: deviceIpList, findDeviceByIp: findDeviceByIp,
   portAllows: portAllows, l2ingress: l2ingress, edgeVlan: edgeVlan,
   measurePing: measurePing, formatPingWin: formatPingWin, detectStorm: detectStorm,
-  formatPingOne: formatPingOne, pingStatsBlock: pingStatsBlock, pingTimes: pingTimes
+  formatPingOne: formatPingOne, pingStatsBlock: pingStatsBlock, pingTimes: pingTimes,
+  // ---- 二层安全与控制平面 ----
+  portLabel: portLabel, isIsolated: isIsolated,
+  showDhcpSnooping: showDhcpSnooping, checkDhcpViolation: checkDhcpViolation,
+  learnIgmp: learnIgmp, showIgmpSnooping: showIgmpSnooping,
+  showArpInspection: showArpInspection, checkArpViolation: checkArpViolation,
+  showPortIsolate: showPortIsolate, showQosPriority: showQosPriority,
+  showLoopGuard: showLoopGuard, showStaticMac: showStaticMac, showMacAging: showMacAging,
+  showLldp: showLldp, showSnmp: showSnmp
 };
 
 if (typeof module !== "undefined" && module.exports) module.exports = api;

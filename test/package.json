@@ -1,0 +1,12 @@
+{
+  "name": "dcn-simulator-tests",
+  "private": true,
+  "description": "神州数码 DCN 网络模拟器的自动化测试（需要 jsdom 跑无头页面测试）",
+  "scripts": {
+    "test": "node cmd-audit.js && node latency-storm-test.js && node link-flow-test.js && node stream-dblclick-test.js && node answer-test.js && node click-test.js && node enterprise-test.js && node lab-health.js",
+    "install-jsdom": "npm install"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.3"
+  }
+}

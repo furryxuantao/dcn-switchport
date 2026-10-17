@@ -54,6 +54,16 @@ var HELP = {
     ["show port-group brief", "查看链路聚合"],
     ["show monitor", "查看端口镜像"],
     ["show port-security [interface ..]", "查看端口安全"],
+    ["show dhcp snooping", "查看DHCP Snooping 表与信任口"],
+    ["show igmp snooping", "查看IGMP Snooping 组播表"],
+    ["show arp inspection", "查看动态ARP检测状态"],
+    ["show port-isolate", "查看端口隔离分组"],
+    ["show qos priority", "查看端口优先级"],
+    ["show loop-guard", "查看环路保护"],
+    ["show mac-address static", "查看静态MAC绑定"],
+    ["show mac aging", "查看MAC老化与表项上限"],
+    ["show lldp", "查看LLDP状态"],
+    ["show snmp", "查看SNMP配置"],
     ["set default", "恢复到出厂设置"],
     ["write", "保存当前配置信息"],
     ["reload / reboot", "重新启动"],
@@ -69,6 +79,19 @@ var HELP = {
     ["interface vlan <id>", "进入VLAN虚接口"],
     ["vlan <id>", "创建vlan"],
     ["mac-address-learning cpu-control", "开启cpu学习mac地址（端口安全前提）"],
+    // ---- DCN 企业级特性 ----
+    ["ip dhcp snooping [vlan <列表> [rate <n>]]", "开启DHCP Snooping 防欺骗（接口下 ip dhcp snooping trust 指定信任口）"],
+    ["ip igmp snooping [version <2|3>]", "开启IGMP Snooping 组播抑制"],
+    ["ip arp inspection [vlan <列表>]", "开启动态ARP检测 DAI"],
+    ["switchport loop-guard enable", "全局开启环路保护"],
+    ["mac-address aging-time <秒>", "设置MAC老化时间"],
+    ["mac-address maximum <N>", "设置MAC表项上限"],
+    ["mac-address static <MAC> interface <端口>", "静态绑定MAC到端口"],
+    ["lldp enable", "开启LLDP 邻居发现"],
+    ["snmp-server community <串> [ro]", "开启SNMP并设置团体字"],
+    ["snmp-agent sys-contact <串>", "设置SNMP联系人"],
+    ["snmp-agent sys-location <串>", "设置SNMP位置"],
+    ["debug mirror", "调试端口镜像（课程实验用）"],
     ["spanning-tree", "开启STP"],
     ["spanning-tree mode mstp", "开启多实例MST"],
     ["spanning-tree mst configuration", "进入MST配置模式"],
@@ -194,6 +217,9 @@ function candidatesFor(mode) {
     add("show interface <port>"); add("show ip route"); add("show spanning-tree");
     add("show port-group brief"); add("show monitor"); add("show port-security");
     add("show port-security interface <port>"); add("set default"); add("write");
+    add("show dhcp snooping"); add("show igmp snooping"); add("show arp inspection");
+    add("show port-isolate"); add("show qos priority"); add("show loop-guard");
+    add("show mac-address static"); add("show mac aging"); add("show lldp"); add("show snmp");
     add("reload"); add("reboot"); add("delete"); add("language chinese"); add("language english");
     add("ping <ip>"); add("tracert <ip>"); add("telnet <ip>");
     return list;
@@ -203,6 +229,15 @@ function candidatesFor(mode) {
     add("hostname <name>"); add("language chinese"); add("language english");
     add("interface <port>"); add("interface vlan <id>"); add("vlan <id>");
     add("mac-address-learning cpu-control"); add("spanning-tree");
+    add("ip dhcp snooping"); add("ip dhcp snooping vlan <list> rate <n>");
+    add("ip igmp snooping"); add("ip igmp version <2|3>");
+    add("ip arp inspection"); add("ip arp inspection vlan <list>");
+    add("switchport loop-guard enable"); add("no switchport loop-guard");
+    add("mac-address aging-time <sec>"); add("mac-address maximum <n>");
+    add("mac-address static <mac> interface <port>"); add("no mac-address static interface <port>");
+    add("lldp enable"); add("no lldp"); add("snmp-server enable");
+    add("snmp-server community <str> ro"); add("snmp-agent sys-contact <str>"); add("snmp-agent sys-location <str>");
+    add("debug mirror");
     add("spanning-tree mode mstp"); add("spanning-tree mst configuration");
     add("spanning-tree mst <id> priority <v>");
     add("port-group <n>"); add("monitor session <id> source interface <port> both");
@@ -220,6 +255,9 @@ function candidatesFor(mode) {
     add("switchport access vlan <id>"); add("switchport trunk allowed vlan <list>");
     add("switchport port-security"); add("switchport port-security maximum <n>");
     add("switchport port-security mac-address <mac>"); add("switchport port-security violation shutdown");
+    add("switchport isolate group <n>"); add("no switchport isolate group");
+    add("switchport priority <0-7>"); add("ip dhcp snooping trust"); add("no ip dhcp snooping trust");
+    add("loop-guard enable"); add("no loop-guard"); add("switchport speed limit <kbps>");
     add("shutdown"); add("no shutdown"); add("no shutdown"); add("ip address <a> <m>");
     add("physical-layer speed 64000"); add("ip rip 1 enable");
     add("passive-interface <port>"); add("authentication securityip <ip>");
@@ -412,12 +450,18 @@ function execLine(ctx, rawLine) {
     // 归一：用缩写解析定位子命令
     var showCands = ["running-config", "startup-config", "flash", "vlan", "mac-address-table",
       "ip interface brief", "ip route", "interface", "spanning-tree", "port-group brief", "monitor",
-      "port-security", "run"];
+      "port-security", "run",
+      // ---- DCN 企业级特性 ----
+      "dhcp snooping", "igmp snooping", "arp inspection", "port-isolate",
+      "qos priority", "loop-guard", "mac-address static", "mac aging", "lldp", "snmp"];
     var restT = tokensOf(rest);
     var r0 = restT[0] || "";
     // show running-config（sh run / sh ru / sh running-config）
     if (/^run/i.test(r0) && (restT.length === 1)) { rest = "running-config"; restT = ["running-config"]; }
-    var hit = resolveAbbrev(rest, showCands.map(function (c) { return { raw: c, toks: tokensOf(c) }; }));
+    // 候选词数必须与输入词数一致：否则 "sh mac aging" 会被单词候选 "mac-address-table" 抢走
+    var showCandObjs = showCands.map(function (c) { return { raw: c, toks: tokensOf(c) }; })
+      .filter(function (c) { return c.toks.length === restT.length; });
+    var hit = resolveAbbrev(rest, showCandObjs);
     var key = hit.length === 1 ? hit[0].raw : null;
     // 带参数的 show interface X / show int e1/0/1
     if (/^int(erface)?$/i.test(r0) && restT.length >= 2) {
@@ -449,6 +493,17 @@ function execLine(ctx, rawLine) {
     if (key === "port-group brief") return { output: Sim.showPortGroup(dev), prompt: promptFor(dev, sess) };
     if (key === "monitor") return { output: Sim.showMonitor(dev), prompt: promptFor(dev, sess) };
     if (key === "port-security") return { output: Sim.showPortSecurity(dev, null), prompt: promptFor(dev, sess) };
+    // ---- DCN 企业级特性 show ----
+    if (key === "dhcp snooping") return { output: Sim.showDhcpSnooping(dev), prompt: promptFor(dev, sess) };
+    if (key === "igmp snooping") return { output: Sim.showIgmpSnooping(dev), prompt: promptFor(dev, sess) };
+    if (key === "arp inspection") return { output: Sim.showArpInspection(dev), prompt: promptFor(dev, sess) };
+    if (key === "port-isolate") return { output: Sim.showPortIsolate(dev), prompt: promptFor(dev, sess) };
+    if (key === "qos priority") return { output: Sim.showQosPriority(dev), prompt: promptFor(dev, sess) };
+    if (key === "loop-guard") return { output: Sim.showLoopGuard(dev), prompt: promptFor(dev, sess) };
+    if (key === "mac-address static") return { output: Sim.showStaticMac(dev), prompt: promptFor(dev, sess) };
+    if (key === "mac aging") return { output: Sim.showMacAging(dev), prompt: promptFor(dev, sess) };
+    if (key === "lldp") return { output: Sim.showLldp(dev), prompt: promptFor(dev, sess) };
+    if (key === "snmp") return { output: Sim.showSnmp(dev), prompt: promptFor(dev, sess) };
   }
 
   // ===== 特权：write/reload/set default/delete/reboot/ping/telnet =====
@@ -542,6 +597,105 @@ function execLine(ctx, rawLine) {
     // mac-address-learning cpu-control
     if (uniq(line, ["mac-address-learning cpu-control"]) === "mac-address-learning cpu-control") {
       dev.cpuControl = true; return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ===== DCN 企业级特性：全局配置模式 =====
+    // 统一的逐词前缀匹配入口：pt("switchport loop-guard") 支持 swi loop-g / switchport loo-guard
+    var _isNo = !!matchPattern([toks[0]], ["no"]);
+    var _pt = _isNo ? toks.slice(1) : toks;
+    var _no = function () { return _isNo; };
+    function pt(s) {
+      var pT = s.split(/\s+/);
+      if (_pt.length < pT.length) return false;
+      return matchPattern(_pt.slice(0, pT.length), pT);
+    }
+    // ip dhcp snooping [vlan <list> [rate <n>]]
+    if (pt("ip dhcp snooping")) {
+      if (_no()) { dev.dhcpSnooping.enabled = false; return { output: "", prompt: promptFor(dev, sess) }; }
+      dev.dhcpSnooping.enabled = true;
+      if (pt("ip dhcp snooping vlan")) {
+        var vl = parseVlanList(_pt[4] || "");
+        if (!vl) return { output: "% vlan列表格式如 10;20-30", prompt: promptFor(dev, sess) };
+        var rate = (_pt[5] && /^r/i.test(_pt[5])) ? _pt[6] : "unlimited";
+        vl.forEach(function (v) { dev.dhcpSnooping.perVlan[v] = { rate: rate, bindings: 0 }; });
+      }
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ip igmp snooping [version <2|3>]
+    if (pt("ip igmp snooping")) {
+      if (_no()) { dev.igmpSnooping.enabled = false; return { output: "", prompt: promptFor(dev, sess) }; }
+      if (pt("ip igmp snooping version") && _pt[4]) {
+        dev.igmpSnooping.version = parseInt(_pt[4], 10); dev.igmpSnooping.enabled = true;
+      } else dev.igmpSnooping.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ip igmp version <N>（无 snooping 词）
+    if (pt("ip igmp version") && _pt[3]) {
+      dev.igmpSnooping.version = parseInt(_pt[3], 10); dev.igmpSnooping.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ip arp inspection [vlan <list>]
+    if (pt("ip arp inspection")) {
+      if (_no()) { dev.arpInspection.enabled = false; dev.arpInspection.perVlan = {}; return { output: "", prompt: promptFor(dev, sess) }; }
+      dev.arpInspection.enabled = true;
+      if (pt("ip arp inspection vlan") && _pt[4]) {
+        var al = parseVlanList(_pt[4]);
+        if (!al) return { output: "% vlan列表格式如 10;20-30", prompt: promptFor(dev, sess) };
+        al.forEach(function (v) { dev.arpInspection.perVlan[v] = "enabled"; });
+      }
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // switchport loop-guard [enable]
+    if (pt("switchport loop-guard") && _pt.length <= 3) {
+      dev.loopGuard.enabled = !_no(); return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // mac-address aging-time <sec>
+    if (pt("mac-address aging-time") && _pt[2]) { dev.agingTime = parseInt(_pt[2], 10); return { output: "", prompt: promptFor(dev, sess) }; }
+    // mac-address maximum <N>
+    if (pt("mac-address maximum") && _pt[2]) { dev.macLimit = parseInt(_pt[2], 10); return { output: "", prompt: promptFor(dev, sess) }; }
+    // mac-address static <MAC> interface <port>
+    if (pt("mac-address static") && _pt.length >= 3) {
+      if (_no()) {
+        if (pt("mac-address static interface") && _pt[3]) {
+          var rpn = S().normalizePort(_pt[3]); if (rpn) delete dev.staticMac[rpn];
+        } else dev.staticMac = {};
+        return { output: "", prompt: promptFor(dev, sess) };
+      }
+      var nm2 = S().normMac(_pt[2]);
+      var pn2 = S().normalizePort(_pt[4] || "");
+      if (!nm2) return { output: "% MAC格式如 00-11-22-33-44-55", prompt: promptFor(dev, sess) };
+      if (!pn2 || !dev.ports[pn2]) return { output: "% 端口不存在", prompt: promptFor(dev, sess) };
+      dev.staticMac[pn2] = dev.staticMac[pn2] || [];
+      if (dev.staticMac[pn2].indexOf(nm2) < 0) dev.staticMac[pn2].push(nm2);
+      dev.macTable[nm2] = { port: pn2, vlan: dev.ports[pn2].accessVlan || 1, age: 0, static: true };
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // lldp [global] enable
+    if (pt("lldp") && _pt.length <= 3) { dev.lldp.enabled = !_no(); return { output: "", prompt: promptFor(dev, sess) }; }
+    // snmp-server community <str> [ro|rw]
+    if (pt("snmp-server community") && _pt[2]) {
+      dev.snmp.enabled = !_no(); dev.snmp.community = _no() ? null : _pt[2];
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("snmp-server enable")) { dev.snmp.enabled = !_no(); return { output: "", prompt: promptFor(dev, sess) }; }
+    // snmp-agent sys-contact / sys-location <str>
+    if (pt("snmp-agent sys-contact") && _pt[2]) {
+      dev.snmp.enabled = true; dev.snmp.contact = _pt.slice(2).join(" ");
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("snmp-agent sys-location") && _pt[2]) {
+      dev.snmp.enabled = true; dev.snmp.location = _pt.slice(2).join(" ");
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (_isNo && pt("snmp-server")) { dev.snmp.enabled = false; return { output: "", prompt: promptFor(dev, sess) }; }
+    // debug mirror（课程 9.端口镜像 中出现）
+    if (pt("debug mirror") && _pt.length <= 2) {
+      var ids = Object.keys(dev.monitor);
+      if (!ids.length) return { output: "% No monitor session（先用 monitor session N source ...）", prompt: promptFor(dev, sess) };
+      var dbg = ids.map(function (id) {
+        var s = dev.monitor[id];
+        return "  Session " + id + ": RX/TX from [" + s.sources.map(function (x) { return x.port; }).join(",") + "] to [" + (s.dest || "none") + "]";
+      });
+      return { output: "Monitor Debug:\n" + dbg.join("\n") + "\n  （调试输出已开启，抓包报文将复制到目的口）", prompt: promptFor(dev, sess) };
     }
     // vlan XX
     if (matchPattern([toks[0]], ["vlan"]) && toks.length === 2 && /^\d+$/.test(toks[1])) {
@@ -693,6 +847,60 @@ function execLine(ctx, rawLine) {
       var mv = tail2.match(/^violation\s+shutdown(\s+recovery\s+(\d+))?$/i);
       if (mv) { eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].portSecurity.enabled = true; dev.ports[pn].portSecurity.violation = "shutdown"; if (mv[2]) dev.ports[pn].portSecurity.recovery = parseInt(mv[2], 10); } }); return { output: "", prompt: promptFor(dev, sess) }; }
       return { output: "% 用法：swi port-sec [maximum N | mac-add XX | violation shutdown [recovery N]]", prompt: promptFor(dev, sess) };
+    }
+    // ===== DCN 企业级特性：接口模式 =====
+    var _it = tokensOf(line);
+    var _ifNo = !!matchPattern([_it[0]], ["no"]);
+    var _itp = _ifNo ? _it.slice(1) : _it;
+    function ipt(s) {
+      var pT = s.split(/\s+/);
+      if (_itp.length < pT.length) return false;
+      return matchPattern(_itp.slice(0, pT.length), pT);
+    }
+    // 端口隔离：swi isolate group 1 / swi port-isolate / swi isolate 1
+    if (ipt("switchport isolate group") || ipt("switchport port-isolate") || ipt("switchport isolate")) {
+      if (_ifNo) {
+        eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].isolateGroup = 0; });
+        return { output: "", prompt: promptFor(dev, sess) };
+      }
+      var gArg = null;
+      for (var gi = 2; gi < _itp.length; gi++) { if (/^\d+$/.test(_itp[gi])) { gArg = _itp[gi]; break; } }
+      var gno = gArg ? parseInt(gArg, 10) : 1;
+      eachPort(function (pn) {
+        if (!dev.ports[pn]) return;
+        dev.ports[pn].isolateGroup = gno;
+        if (dev.ports[pn].mode !== "access") dev.ports[pn].mode = "access"; // 隔离口只能是 access
+      });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // QoS 优先级：swi priority 5 / swi cos 5
+    if ((ipt("switchport priority") || ipt("switchport cos")) && /^\d/.test(_itp[2] || "")) {
+      var pri = parseInt(_itp[2], 10);
+      if (pri < 0 || pri > 7) return { output: "% 优先级范围 0~7（802.1p）", prompt: promptFor(dev, sess) };
+      if (_ifNo) { eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].qosPrio = 0; }); }
+      else eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].qosPrio = pri; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // DHCP Snooping 信任口：ip dhcp snooping trust（可缩写 ip dhcp s trust）
+    if (ipt("ip dhcp snooping trust")) {
+      eachPort(function (pn) {
+        if (!dev.ports[pn]) return;
+        dev.ports[pn].trust = !_ifNo;
+        var i = dev.dhcpSnooping.trustedPorts.indexOf(pn);
+        if (!_ifNo && i < 0) dev.dhcpSnooping.trustedPorts.push(pn);
+        if (_ifNo && i >= 0) dev.dhcpSnooping.trustedPorts.splice(i, 1);
+      });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 环路保护 / BPDU Guard
+    if (ipt("loop-guard") || ipt("bpdu-guard")) {
+      var lgOn = !_ifNo && (!_itp[1] || !/^d/i.test(_itp[1]));
+      eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].loopGuard = lgOn; dev.ports[pn].BPDUGuard = lgOn; } });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 端口速率限制：swi speed limit 1000 / switchport rate-limit 1000
+    if ((ipt("switchport speed limit") || ipt("switchport rate-limit") || ipt("switchport speed")) && /^\d/.test(_itp[2] || "")) {
+      return { output: "% 端口限速已生效：" + _itp[2] + " kbps（仿真不改变转发速率）", prompt: promptFor(dev, sess) };
     }
     // shutdown / no shutdown（真机缩写：任意唯一前缀 shut/shutd/shutdown，no shut 同理）
     var _t = tokensOf(line);
