@@ -1775,6 +1775,16 @@ function init() {
     print("【连线】先选线型 → 点源设备选端口 → 点目标设备选端口；Shift+点=自动速连；Esc取消。", "ok");
     print("【缩写】每个单词只输唯一前缀即可：", "ok");
     print(" conf t = config terminal\n int e1/0/1 = interface\n swi mode acc = switchport mode access\n swi acc vlan 10\n swi trunk allowed vlan 3;5-8\n sh run = show running-config\n sh ip ro = show ip route\n sh vlan / sh mac / sh int e1/0/1\n no shut = no shutdown（shutd 兼容实验报告）\n ? = 本模式全部命令 · TAB = 补全");
+    print("【企业级二层安全】神州数码 DCS 进阶特性，全局配置模式下敲 ip ? / swi ? 可看全部：", "ok");
+    print(" ip dhcp snooping [vlan <列表> [rate <n>]]   开启 DHCP Snooping 防欺骗\n 接口下 ip dhcp snooping trust        把上行口设为信任口\n sh dhcp s                             查看绑定表与信任口");
+    print(" ip igmp snooping [version 2|3]     开启组播抑制\n sh igm s                              查看组播转发表");
+    print(" ip arp inspection vlan <列表>       开启动态ARP检测 DAI\n sh arp i                              查看检测状态");
+    print(" switchport loop-guard enable        全局环路保护\n 接口下 loop-guard enable            接入口检测环路");
+    print("接口下 swi isolate group <n>         端口隔离（隔离口之间互不相通）\n sh port-is                           查看隔离分组");
+    print("接口下 swi priority <0-7>            802.1p 优先级（6=网络控制 3=语音）\n sh qos p                              查看优先级");
+    print(" mac-address static <MAC> interface <端口>   静态MAC绑定\n mac-address aging-time <秒> / mac-address maximum <条>\n sh mac-address s / sh mac a");
+    print(" lldp enable / snmp-server community <串> ro / snmp-agent sys-contact <串>\n sh lldp / sh snmp");
+    print(" mac-address-learning cpu-control    CPU学习MAC（防MAC泛洪攻击）");
   };
   var be = $("btnEmptyLab"); if (be) be.onclick = function () { sel.value = "lab4"; loadLab("lab4"); };
   var bh = $("btnEmptyHelp"); if (bh) bh.onclick = function () { $("btnHelp").click(); };

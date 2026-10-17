@@ -25,6 +25,31 @@
 > 提示符严格按 PPT：`switch> / switch# / switch(Config)# / switch(Config-if-...)# / Router(config)# / Router(config-if-...)# / Router(config_rip...)#`，
 > 支持 `?` 帮助、`TAB` 补全、`↑↓` 历史、命令缩写（如 `swi / acc / int / conf t`）。
 
+## 课程外的进阶功能（神州数码 DCS 企业级特性）
+
+除了 16 个实验用到的命令，还实现了 DCS 系列真机常见的进阶特性，全部可用 `show` 验证，
+部分（如**端口隔离**）会真实影响转发路径：
+
+| 功能 | 配置命令 | 查看命令 |
+|------|----------|----------|
+| DHCP Snooping 防欺骗 | `ip dhcp snooping [vlan <列表> [rate <n>]]`、接口下 `ip dhcp snooping trust` | `show dhcp snooping` |
+| IGMP Snooping 组播抑制 | `ip igmp snooping [version 2\|3]` | `show igmp snooping` |
+| 动态 ARP 检测 DAI | `ip arp inspection vlan <列表>` | `show arp inspection` |
+| 端口隔离 | 接口下 `switchport isolate group <n>` | `show port-isolate` |
+| QoS 优先级 802.1p | 接口下 `switchport priority <0-7>` | `show qos priority` |
+| 环路保护 | 全局 `switchport loop-guard enable`、接口下 `loop-guard enable` | `show loop-guard` |
+| 静态 MAC 绑定 | `mac-address static <MAC> interface <端口>` | `show mac-address static` |
+| MAC 表管理 | `mac-address aging-time <秒>`、`mac-address maximum <条>` | `show mac aging` |
+| LLDP 邻居发现 | `lldp enable` | `show lldp` |
+| SNMP | `snmp-server community <串> ro`、`snmp-agent sys-contact/sys-location <串>` | `show snmp` |
+| 镜像调试 | `debug mirror` | — |
+
+所有命令同样支持唯一前缀缩写，例如 `ip dhcp s`、`ip arp i vlan 10`、`swi isolate g 1`、
+`swi prio 6`、`mac-address aging-t 600`、`sh dhcp s`、`sh mac a`。
+
+**端口隔离是真实生效的**：把两台 PC 接入都开了 `switchport isolate group` 的端口后，
+`ping` 会返回「端口隔离阻断」，`diagnoseFail` 会指名是哪两个口。
+
 ## 目录
 - `index.html` 入口（拓扑画布 + CLI 终端 + 测试清单 + 抓包）
 - `src/sim-core.js` 转发/路由/MAC/STP/聚合/镜像/安全仿真（无 DOM，可 node 单测）
@@ -47,12 +72,36 @@
 - 状态实时刷新（500ms）：端口 LED/状态牌/风暴条/路由概览原地更新，不用敲回车
 - 一键标准答案：按实验报告参数表真实配出可通网络（12~16 含 IP/时钟/静态/默认/RIP/OSPF），23 项端到端 ping 验证
 
-## 快速验证（node 单测，无需 npm install）
+## 快速验证（node 单测）
+
+无需构建依赖即可跑大部分测试：
+
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-node src\run-tests.js            # CLI 引擎 23 项
-node ..\simtest\answer-test.js   # 端到端：16实验载入+标准答案+ping 断言
-node ..\simtest\smoke.js         # 页面无头冒烟
+node src\run-tests.js       # CLI 引擎 23 项
+node test\cmd-audit.js      # 命令审计 70 项
+node test\enterprise-test.js # 企业级新功能 121 项
+node test\latency-storm-test.js
+```
+
+跑无头页面测试（载入实验、点击交互、标准答案端到端）需要 jsdom：
+
+```powershell
+cd test
+npm install                 # 只装 jsdom 一个依赖
+cd ..
+node test\answer-test.js    # 端到端 24 项
+node test\link-flow-test.js
+node test\click-test.js
+node test\lab-health.js     # 17 个实验载入体检
+```
+
+Electron 真机自检（必须在 `electron/` 目录执行）：
+
+```powershell
+cd electron
+npm install
+npx electron . --selftest --no-sandbox
 ```
 
 ## 打包 exe（Electron）
