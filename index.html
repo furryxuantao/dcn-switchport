@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>神州数码 DCN 网络模拟器 · 类思科实验版</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+<div class="brand"><div class="mark" id="brandMark"><span class="bm-glow"></span><span class="bm-core"></span></div><h1>DCN 网络模拟器<small>神州数码指令 · 思科式连线 · 16 个课程实验</small></h1></div>
+<span class="sp"></span>
+<select id="labSel" title="选择实验"></select>
+<button id="btnLab" class="primary"><i data-icon="lab"></i><span>载入实验</span></button>
+<button id="btnAnswer"><i data-icon="answer"></i><span>一键标准答案</span></button>
+<button id="btnClear" class="ghost" title="清空画布"><i data-icon="clear"></i></button>
+<button id="btnSave" class="ghost" title="保存拓扑"><i data-icon="save"></i></button>
+<button id="btnLoad" class="ghost" title="读取拓扑"><i data-icon="load"></i></button>
+<button id="btnHelp" class="ghost" title="命令手册"><i data-icon="help"></i></button>
+</header>
+<main>
+<div class="card" id="leftCol">
+<h3><i data-icon="plus"></i>设备与连线</h3>
+<div class="secTitle"><i data-icon="cpu"></i>设备 — 点击添加到画布</div>
+<div id="palette">
+<div class="devbtn" data-type="pc"><span class="ic"><i data-icon="pc"></i></span><span>PC 主机<small>ping / ipconfig / tracert</small></span></div>
+<div class="devbtn" data-type="l2"><span class="ic"><i data-icon="switch"></i></span><span>二层交换<small>DCS-3926S · VLAN/安全/聚合</small></span></div>
+<div class="devbtn" data-type="l3"><span class="ic"><i data-icon="l3"></i></span><span>三层交换<small>S4600 · 虚接口/路由</small></span></div>
+<div class="devbtn" data-type="router"><span class="ic"><i data-icon="router"></i></span><span>路由器<small>RGNOS · RIP/OSPF</small></span></div>
+</div>
+<div class="secTitle"><i data-icon="cable"></i>连线 — 先选线型，再点两台设备选端口</div>
+<div id="wirebox">
+<div class="wirebtn" data-wire="auto"><span class="wc"><i data-icon="wireAuto"></i></span>自动<small>按设备推断</small></div>
+<div class="wirebtn" data-wire="copper"><span class="wc"><i data-icon="wireCopper"></i></span>直通线<small>以太网 e/g 口</small></div>
+<div class="wirebtn" data-wire="cross"><span class="wc"><i data-icon="wireCross"></i></span>交叉线<small>同类设备互联</small></div>
+<div class="wirebtn" data-wire="fiber"><span class="wc"><i data-icon="wireFiber"></i></span>光纤<small>高速上行</small></div>
+<div class="wirebtn" data-wire="console"><span class="wc"><i data-icon="wireConsole"></i></span>Console<small>PC-管理设备</small></div>
+<div class="wirebtn" data-wire="dce"><span class="wc"><i data-icon="wireDce"></i></span>DCE串口<small>母头·配时钟</small></div>
+<div class="wirebtn" data-wire="dte"><span class="wc"><i data-icon="wireDte"></i></span>DTE串口<small>公头</small></div>
+</div>
+<div class="hint"><i data-icon="cursor"></i> <b>单击选中</b>设备，<b>双击进入CLI</b>；<b>拖空白处平移画布</b>，滚轮缩放，<kbd>⤾</kbd>自适应；<kbd>Delete</kbd>/右键删设备。<br>思科式连线：<b>①选线型 ②点源设备选端口 ③点目标设备选端口</b>，连完自动收工。<br>快捷：<kbd>Shift+点设备</kbd>自动速连。<kbd>Esc</kbd>取消，单击连线删除。</div>
+<div class="hint" id="linkHint"><i data-icon="info"></i> 当前连线：无</div>
+</div>
+<div class="card">
+<h3 id="topoTitle"><i data-icon="activity"></i>拓扑画布 · 双击设备进入 CLI</h3>
+<div id="canvasWrap">
+<div id="stage"><svg id="topo"></svg><div id="nodes"></div></div>
+<div id="stormBar">⚠ 广播风暴 — 存在环路且未开启 <b>spanning-tree</b></div>
+<div id="portPicker"></div>
+<div id="emptyState" style="display:none"><div class="big"><i data-icon="server"></i> 从空白画布开始</div>
+<div>左侧点击添加设备，或从右上载入 16 个课程实验</div>
+<div class="row"><button id="btnEmptyLab"><i data-icon="lab"></i> 载入 VLAN 示例</button><button id="btnEmptyHelp"><i data-icon="book"></i> 命令手册</button></div></div>
+<div id="zoombar"><button id="zoomOut" title="缩小"><i data-icon="zoomOut"></i></button><span id="zoomLabel">100%</span><button id="zoomIn" title="放大"><i data-icon="zoomIn"></i></button><button id="zoomReset" title="自适应"><i data-icon="zoomFit"></i></button></div>
+</div>
+</div>
+<div class="card" id="cliCard">
+<div id="rightTabs"><button data-t="cli" class="on"><i data-icon="terminal"></i> 终端</button><button data-t="cfg"><i data-icon="server"></i> 设备</button><button data-t="task"><i data-icon="list"></i> 清单</button><button data-t="cap"><i data-icon="search"></i> 抓包</button></div>
+<div class="tabpage on" id="pg-cli">
+<div id="termBar"><span id="termTitle"><i data-icon="terminal"></i> 终端 CLI</span>
+<button id="btnFullTerm" title="全屏终端（F11 / Esc 退出）"><i data-icon="zoomFit"></i><span>全屏</span></button>
+</div>
+<div id="term" title="点击终端任意处开始输入"></div>
+<details id="themeBox"><summary>🎨 终端主题与颜色（点击展开）</summary>
+<div id="themeRow"></div>
+<div class="tcustom"><label>背景 <input type="color" id="tcBg"></label><label>文字 <input type="color" id="tcInk"></label><label>提示符 <input type="color" id="tcAcc"></label><label>字号 <input type="range" id="tcSize" min="11" max="18" value="13"></label><button id="tcReset">恢复默认</button></div>
+</details>
+<div class="hint">终端内直接输入：<kbd>回车</kbd>执行 · <kbd>TAB</kbd>补全 · <kbd>↑↓</kbd>历史 · <kbd>Ctrl+C</kbd>取消本行 · <kbd>Ctrl+L</kbd>清屏。提示符按 PPT：<kbd>switch&gt;</kbd> / <kbd>switch#</kbd> / <kbd>switch(Config)#</kbd> / <kbd>Router(config)#</kbd>。</div></div>
+<div class="tabpage" id="pg-cfg"><div id="cfgBox"></div></div>
+<div class="tabpage" id="pg-task"><div id="taskBox"></div></div>
+<div class="tabpage" id="pg-cap"><div id="capBox" style="font-size:12px"></div></div>
+</div>
+</main>
+<footer><span><i data-icon="sparkles"></i> 缩写规则：每个单词是目标单词的唯一前缀即可，如 <kbd>swi</kbd>=switchport <kbd>acc</kbd>=access <kbd>sh</kbd>=show</span><span id="status">就绪 · 空画布</span></footer>
+<div id="toast"></div>
+<button id="exitFs"><i data-icon="x"></i> 退出全屏（Esc）</button>
+<div id="ctxmenu"></div>
+<div id="fxLayer"></div>
+<div id="modalBack" style="display:none"><div id="modal"><h4 id="modalTitle">重命名设备</h4><div id="modalHint" class="hint" style="display:none"></div><input id="modalInput" data-mode="rename" maxlength="32" placeholder="如 Switch1（不含空格）"><div class="mrow"><button id="modalOk" class="primary">确定</button><button id="modalCancel">取消</button></div></div></div>
+<script src="src/sim-core.js"></script>
+<script src="src/cli-engine.js"></script>
+<script src="src/labs.js"></script>
+<script src="src/icons.js"></script>
+<script src="src/ui.js"></script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+{
+  "name": "dcn-simulator",
+  "version": "1.0.0",
+  "description": "神州数码 DCN 网络模拟器（类 Packet Tracer，指令按课程 PPT/实验报告）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "cn.dcn.simulator",
+    "productName": "DCN网络模拟器",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      {
+        "from": ".",
+        "filter": [
+          "main.js",
+          "preload.js",
+          "package.json"
+        ]
+      },
+      {
+        "from": "..",
+        "to": ".",
+        "filter": [
+          "index.html",
+          "styles.css",
+          "README.md",
+          "src/**/*",
+          "assets/icons/*.svg"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "DCN网络模拟器-${version}-绿色版.exe"
+    }
+  }
+}
