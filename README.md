@@ -97,8 +97,13 @@ node test\enterprise-test.js # 企业级新功能 121 项
 node test\runtime-behavior-test.js # 运行时行为（安全特性是否真生效）42 项
 node test\edge-case-test.js # 边界与异常输入 56 项
 node test\advanced-feature-test.js # ACL/VRRP/DHCP 78 项
+node test\consistency-test.js # 多特性组合 43 项
+node test\factory-reset-test.js # 出厂重置完整性 22 项
+node test\ip-math-test.js   # IP 换算与位运算 33 项
 node test\latency-storm-test.js
 ```
+
+共 594 项自动化测试，全部通过。
 
 跑无头页面测试（载入实验、点击交互、标准答案端到端）需要 jsdom：
 

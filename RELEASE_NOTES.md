@@ -1,9 +1,9 @@
-## 神州数码 DCN 网络模拟器 v1.0.0
+## 神州数码 DCN 网络模拟器 v1.2.0
 
 对标思科 Packet Tracer 的网络实验模拟器，命令与提示符严格对照本课程 PPT 与实验报告。
 
 ### 下载
-- `DCN-Simulator-1.0.0-portable.exe` — 绿色单文件版，Windows 64 位，双击即用，无需安装
+- `DCN-Simulator-1.2.0-portable.exe` — 绿色单文件版，Windows 64 位，双击即用，无需安装
 
 > 首次运行需解压约 30 秒（单文件 exe 会自解压到临时目录），窗口不会立刻出现属正常现象。
 > 未做代码签名，Windows SmartScreen 可能提示"未知发布者"，选择"仍要运行"即可。
@@ -47,9 +47,24 @@ src/cli-engine.js   DCN 命令解析与执行
 src/labs.js         16 个实验预设
 src/ui.js           界面与交互
 src/icons.js        图标映射（Lucide, ISC License）
-test/               自动化测试（496 项）
+test/               自动化测试（594 项）
 electron/           Electron 打包配置
 ```
+
+### v1.2.0 修复的问题
+- **IP 换算精度丢失**：`192.168.10.0` 曾被算成 `192.168.0.0`（整数乘法超过 2^31 后精度丢失），
+  影响所有第三段 ≥ 8 的地址（DHCP 池、ACL 匹配、路由查找）
+- **广播地址计算优先级错误**：`|` 优先于 `>>>`，导致 DHCP 地址池分配到 `.254` 而非 `.1`
+- **PC 充当中继器**：转发路径中间的 PC 会把报文原路送回，
+  绕过端口隔离、ACL 等所有二层安全机制
+- **非法 IP 被判合法**：`1.1.1.1x` 会被 `parseInt` 宽松解析成 `1.1.1.1`
+- **`set default` 不重置主机名**
+- **模式切换残留状态**：`aclId` / `dhcpPool` 等在其它模式下未清理
+- **DHCP 分配了网络地址/广播地址**
+- `show spanning-tree` 在无生成树信息时崩溃
+- `interface e1/0/1,3,5` 只生效第一个口（逗号列表被截断）
+- `sh por-sec` 这类跨连字符缩写不识别
+- MAC 表上限、老化时间、静态 MAC 绑定此前只存不生效，现已真实生效
 
 ### 测试
 ```powershell
@@ -59,10 +74,13 @@ node test\enterprise-test.js   # 企业级新功能（121 项）
 node test\runtime-behavior-test.js  # 运行时行为（42 项）
 node test\edge-case-test.js    # 边界与异常输入（56 项）
 node test\advanced-feature-test.js  # ACL/VRRP/DHCP（78 项）
+node test\consistency-test.js  # 多特性组合（43 项）
+node test\factory-reset-test.js # 出厂重置完整性（22 项）
+node test\ip-math-test.js      # IP 换算与位运算（33 项）
 cd test; npm install; cd ..    # jsdom 依赖（仅页面测试需要）
 node test\answer-test.js       # 端到端（24 项）
 ```
-共 496 项自动化测试，全部通过。
+共 594 项自动化测试，全部通过。
 
 ### 图标许可
 [Lucide](https://lucide.dev) Icons，ISC License。
