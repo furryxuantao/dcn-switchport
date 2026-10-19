@@ -23,6 +23,8 @@ function promptFor(dev, sess) {
     case "mstp": return h + "(Config-mstp-region)#";
     case "rip": return h + "(Config-rip-" + (sess.ripProc || 1) + ")#";
     case "ospf": return h + "(Config-ospf-" + (sess.ospfProc || 1) + ")#";
+    case "acl": return h + "(Config-acl-" + (sess.aclId || "") + ")#";
+    case "dhcp-pool": return h + "(Config-dhcp-pool-" + (sess.dhcpPool || "") + ")#";
     default: return h + "#";
   }
 }
@@ -64,6 +66,10 @@ var HELP = {
     ["show mac aging", "查看MAC老化与表项上限"],
     ["show lldp", "查看LLDP状态"],
     ["show snmp", "查看SNMP配置"],
+    ["show access-lists", "查看ACL规则与应用位置"],
+    ["show vrrp", "查看VRRP组状态与Master"],
+    ["show ip dhcp pool", "查看DHCP地址池"],
+    ["show ip dhcp binding", "查看DHCP地址绑定"],
     ["set default", "恢复到出厂设置"],
     ["write", "保存当前配置信息"],
     ["reload / reboot", "重新启动"],
@@ -92,6 +98,12 @@ var HELP = {
     ["snmp-agent sys-contact <串>", "设置SNMP联系人"],
     ["snmp-agent sys-location <串>", "设置SNMP位置"],
     ["debug mirror", "调试端口镜像（课程实验用）"],
+    // ---- ACL / VRRP / DHCP 服务器 ----
+    ["ip access-list <standard|extended> <编号>", "创建ACL并进入配置模式"],
+    ["ip access-list extended <编号> → permit/deny", "ACL规则：seq <n> permit ip <源> <目的> [eq 端口] [log]"],
+    ["service dhcp", "开启DHCP服务器"],
+    ["ip dhcp pool <名字>", "创建DHCP地址池并进入配置模式"],
+    ["ip dhcp excluded-address <起> [止]", "排除地址池中的地址"],
     ["spanning-tree", "开启STP"],
     ["spanning-tree mode mstp", "开启多实例MST"],
     ["spanning-tree mst configuration", "进入MST配置模式"],
@@ -188,8 +200,26 @@ function resolveAbbrev(input, candidates) {
       if (p.toLowerCase().indexOf(q.toLowerCase()) !== 0) { ok = false; break; }
     }
     if (!ok) return;
-    // 唯一前缀校验：若输入词同时是多个候选的同一位置前缀，视为歧义（由调用方判断）
     hits.push(c);
+  });
+  if (hits.length) return hits;
+  // 兜底：允许跨连字符的分段缩写（真机行为）。
+  // 输入的每一段都必须是模式各段的前缀——如 por-sec 命中 port-security，
+  // por-gr 命中 port-group brief。只在前缀匹配完全落空时才启用，避免改变既有语义。
+  var inSegs = inT.join("").toLowerCase().split(/[-_]+/).filter(Boolean);
+  if (inSegs.length < 2) return hits;
+  candidates.forEach(function (c) {
+    var pSegs = c.toks.join("").toLowerCase().split(/[-_]+/).filter(Boolean);
+    var si = 0, all = true;
+    for (var i = 0; i < inSegs.length; i++) {
+      var seg = inSegs[i], found = -1;
+      for (var j = si; j < pSegs.length; j++) {
+        if (pSegs[j].indexOf(seg) === 0) { found = j; break; }
+      }
+      if (found < 0) { all = false; break; }
+      si = found + 1;                       // 段必须顺序推进，不可重复占用
+    }
+    if (all) hits.push(c);
   });
   return hits;
 }
@@ -220,6 +250,8 @@ function candidatesFor(mode) {
     add("show dhcp snooping"); add("show igmp snooping"); add("show arp inspection");
     add("show port-isolate"); add("show qos priority"); add("show loop-guard");
     add("show mac-address static"); add("show mac aging"); add("show lldp"); add("show snmp");
+    add("show access-lists"); add("show vrrp");
+    add("show ip dhcp pool"); add("show ip dhcp binding");
     add("reload"); add("reboot"); add("delete"); add("language chinese"); add("language english");
     add("ping <ip>"); add("tracert <ip>"); add("telnet <ip>");
     return list;
@@ -238,6 +270,11 @@ function candidatesFor(mode) {
     add("lldp enable"); add("no lldp"); add("snmp-server enable");
     add("snmp-server community <str> ro"); add("snmp-agent sys-contact <str>"); add("snmp-agent sys-location <str>");
     add("debug mirror");
+    add("ip access-list <standard|extended> <num>");
+    add("ip access-list extended <num>"); add("no ip access-list <num>");
+    add("service dhcp"); add("no service dhcp");
+    add("ip dhcp pool <name>"); add("no ip dhcp pool <name>");
+    add("ip dhcp excluded-address <start> [end]");
     add("spanning-tree mode mstp"); add("spanning-tree mst configuration");
     add("spanning-tree mst <id> priority <v>");
     add("port-group <n>"); add("monitor session <id> source interface <port> both");
@@ -256,6 +293,9 @@ function candidatesFor(mode) {
     add("switchport port-security"); add("switchport port-security maximum <n>");
     add("switchport port-security mac-address <mac>"); add("switchport port-security violation shutdown");
     add("switchport isolate group <n>"); add("no switchport isolate group");
+    add("ip access-group <num> in"); add("ip access-group <num> out"); add("no ip access-group");
+    add("vrrp <id> ip <vip>"); add("vrrp <id> priority <1-254>");
+    add("vrrp <id> timers advertise <sec> hold <sec>");
     add("switchport priority <0-7>"); add("ip dhcp snooping trust"); add("no ip dhcp snooping trust");
     add("loop-guard enable"); add("no loop-guard"); add("switchport speed limit <kbps>");
     add("shutdown"); add("no shutdown"); add("no shutdown"); add("ip address <a> <m>");
@@ -266,6 +306,17 @@ function candidatesFor(mode) {
     return list;
   }
   if (mode === "vlan") { add("name <n>"); add("switchport interface <port>"); add("exit"); return list; }
+  if (mode === "acl") {
+    add("remark <描述>"); add("seq <n> permit ip <源> <目的>");
+    add("permit ip any any"); add("deny ip any any");
+    add("permit tcp <源> <目的> eq <端口>"); add("deny ip any any log");
+    add("exit"); return list;
+  }
+  if (mode === "dhcp-pool") {
+    add("network <网段> <掩码>"); add("default-router <网关>");
+    add("dns-server <IP>"); add("lease <秒>"); add("range <起始> <结束>");
+    add("vlan <id>"); add("exit"); return list;
+  }
   if (mode === "mstp") { add("instance <i> vlan <list>"); add("exit"); return list; }
   if (mode === "rip") {
     add("version 2"); add("version 1"); add("auto-summary"); add("no auto-summary");
@@ -453,7 +504,9 @@ function execLine(ctx, rawLine) {
       "port-security", "run",
       // ---- DCN 企业级特性 ----
       "dhcp snooping", "igmp snooping", "arp inspection", "port-isolate",
-      "qos priority", "loop-guard", "mac-address static", "mac aging", "lldp", "snmp"];
+      "qos priority", "loop-guard", "mac-address static", "mac aging", "lldp", "snmp",
+      // ---- ACL / VRRP / DHCP 服务器 ----
+      "access-lists", "acl", "vrrp", "ip dhcp pool", "ip dhcp binding"];
     var restT = tokensOf(rest);
     var r0 = restT[0] || "";
     // show running-config（sh run / sh ru / sh running-config）
@@ -504,6 +557,11 @@ function execLine(ctx, rawLine) {
     if (key === "mac aging") return { output: Sim.showMacAging(dev), prompt: promptFor(dev, sess) };
     if (key === "lldp") return { output: Sim.showLldp(dev), prompt: promptFor(dev, sess) };
     if (key === "snmp") return { output: Sim.showSnmp(dev), prompt: promptFor(dev, sess) };
+    // ---- ACL / VRRP / DHCP 服务器 ----
+    if (key === "access-lists" || key === "acl") return { output: Sim.showAcl(dev), prompt: promptFor(dev, sess) };
+    if (key === "vrrp") return { output: Sim.showVrrp(dev, ctx.devices, ctx.links), prompt: promptFor(dev, sess) };
+    if (key === "ip dhcp pool") return { output: Sim.showDhcpPool(dev), prompt: promptFor(dev, sess) };
+    if (key === "ip dhcp binding") return { output: Sim.showDhcpBinding(dev), prompt: promptFor(dev, sess) };
   }
 
   // ===== 特权：write/reload/set default/delete/reboot/ping/telnet =====
@@ -697,6 +755,62 @@ function execLine(ctx, rawLine) {
       });
       return { output: "Monitor Debug:\n" + dbg.join("\n") + "\n  （调试输出已开启，抓包报文将复制到目的口）", prompt: promptFor(dev, sess) };
     }
+    // ===== ACL 访问控制列表 =====
+    // ip access-list <standard|extended> <编号>  进入 ACL 配置模式
+    if (pt("ip access-list")) {
+      var aclNum = _pt[3] !== undefined ? _pt[3] : _pt[2];
+      var aclType = _pt[2] !== undefined && /^(s\w+|standard)$/i.test(_pt[2]) ? "standard" : "extended";
+      if (aclNum === undefined || !/^\d+$/.test(String(aclNum))) {
+        return { output: "% 用法：ip access-list <standard|extended> <编号>", prompt: promptFor(dev, sess) };
+      }
+      if (parseInt(aclNum, 10) < 1 || parseInt(aclNum, 10) > 1999) {
+        return { output: "% ACL 编号范围 1-1999（1-99 标准，100-199 扩展，1000-1999 扩展）", prompt: promptFor(dev, sess) };
+      }
+      dev.acl = dev.acl || { lists: {} };
+      dev.acl.lists[String(aclNum)] = dev.acl.lists[String(aclNum)] || { id: String(aclNum), name: "", rules: [] };
+      dev.acl.lists[String(aclNum)].type = aclType;
+      sess.mode = "acl";
+      sess.aclId = String(aclNum);
+      sess.aclType = aclType;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // no ip access-list <编号>
+    if (_no() && pt("ip access-list") && _pt[3] !== undefined) {
+      if (dev.acl && dev.acl.lists) delete dev.acl.lists[_pt[3]];
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ===== DHCP 服务器 =====
+    // service dhcp
+    if (pt("service dhcp")) {
+      if (!dev.dhcp) dev.dhcp = { enabled: false, pools: {}, excluded: [], bindings: {} };
+      dev.dhcp.enabled = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ip dhcp pool <名字>
+    if (pt("ip dhcp pool")) {
+      if (!dev.dhcp) dev.dhcp = { enabled: false, pools: {}, excluded: [], bindings: {} };
+      if (_no()) { delete dev.dhcp.pools[_pt[3]]; return { output: "", prompt: promptFor(dev, sess) }; }
+      var pname = _pt[3];
+      if (!pname) return { output: "% 用法：ip dhcp pool <名字>", prompt: promptFor(dev, sess) };
+      dev.dhcp.pools[pname] = dev.dhcp.pools[pname] || { name: pname, lease: 3600 };
+      dev.dhcp.enabled = true;
+      sess.mode = "dhcp-pool";
+      sess.dhcpPool = pname;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ip dhcp excluded-address <start> <end>
+    if (pt("ip dhcp excluded-address")) {
+      if (!dev.dhcp) dev.dhcp = { enabled: false, pools: {}, excluded: [], bindings: {} };
+      if (_no()) { dev.dhcp.excluded = []; return { output: "", prompt: promptFor(dev, sess) }; }
+      var exs = _pt[3], exe = _pt[4];
+      if (!exs) return { output: "% 用法：ip dhcp excluded-address <起始IP> [结束IP]", prompt: promptFor(dev, sess) };
+      if (exe) {
+        var a = S().ipToInt(exs), b = S().ipToInt(exe);
+        if (a === null || b === null) return { output: "% IP 格式错误", prompt: promptFor(dev, sess) };
+        for (var q = Math.min(a, b); q <= Math.max(a, b); q++) dev.dhcp.excluded.push(S().intToIp(q));
+      } else dev.dhcp.excluded.push(exs);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     // vlan XX
     if (matchPattern([toks[0]], ["vlan"]) && toks.length === 2 && /^\d+$/.test(toks[1])) {
       Sim.ensureVlan(dev, toks[1]); sess.mode = "vlan"; sess.vlanId = toks[1];
@@ -714,11 +828,9 @@ function execLine(ctx, rawLine) {
       }
       // 去空格后解析范围
       var ports = [];
-      restIf.split(",").forEach(function (part) {
-        part.split(";").forEach(function (pp) {
-          var ex = Sim.expandPortRange(pp.trim());
-          ex.forEach(function (p) { if (ports.indexOf(p) < 0) ports.push(p); });
-        });
+      // 整体交给 expandPortRange 处理（它内部已支持 , 与 ; 分隔及裸数字继承前缀）
+      Sim.expandPortRange(restIf).forEach(function (p) {
+        if (ports.indexOf(p) < 0) ports.push(p);
       });
       ports = ports.filter(function (p) { return dev.ports[p] || p.indexOf("vlan") === 0; });
       if (!ports.length) return { output: "% 端口不存在（例：e1/0/1, e1/0/1-4, g0/0, s1/0, vlan10）", prompt: promptFor(dev, sess) };
@@ -892,6 +1004,43 @@ function execLine(ctx, rawLine) {
       });
       return { output: "", prompt: promptFor(dev, sess) };
     }
+    // 应用 ACL：ip access-group <编号> <in|out>
+    if (ipt("ip access-group")) {
+      var agId = _itp[2], agDir = _itp[3] || "in";
+      if (!dev.acl) dev.acl = { lists: {} };
+      if (!dev.acl.applied) dev.acl.applied = {};
+      if (!dev.acl.applied.port) dev.acl.applied.port = {};
+      eachPort(function (pn) {
+        if (!dev.ports[pn]) return;
+        if (_ifNo) delete dev.acl.applied.port[pn];
+        else dev.acl.applied.port[pn] = String(agId);
+      });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // VRRP：vrrp <vrid> ip <虚IP> / vrrp <vrid> priority <n> / vrrp <vrid> timers ...
+    if (ipt("vrrp")) {
+      var vrid = _itp[1];
+      if (!/^\d+$/.test(String(vrid))) {
+        return { output: "% 用法：vrrp <组号> ip <虚拟IP> | vrrp <组号> priority <1-254> | vrrp <组号> timers advertise <秒> hold <秒>", prompt: promptFor(dev, sess) };
+      }
+      if (!dev.vrrp) dev.vrrp = { groups: {} };
+      var vg = dev.vrrp.groups[String(vrid)] = dev.vrrp.groups[String(vrid)] || {
+        vrid: parseInt(vrid, 10), ip: null, priority: 100, hold: 3, advert: 1, state: "Init", interface: ""
+      };
+      // 记录所在接口
+      (sess.ifPorts || []).forEach(function (p) { if (!vg.interface) vg.interface = p; });
+      var vi2 = 2;
+      if (_itp[vi2] && /^i(p)?$/i.test(_itp[vi2])) { vg.ip = _itp[vi2 + 1]; vi2 += 2; }
+      else if (_itp[vi2] && /^p(r)?(i)?(o)?(r)?(i)?(t)?(y)?$/i.test(_itp[vi2])) { vg.priority = parseInt(_itp[vi2 + 1], 10); vi2 += 2; }
+      else if (_itp[vi2] && /^t/i.test(_itp[vi2])) {
+        // vrrp <id> timers advertise <s> hold <s>
+        if (_itp[vi2 + 1] && /^a/i.test(_itp[vi2 + 1]) && _itp[vi2 + 2]) { vg.advert = parseInt(_itp[vi2 + 2], 10); vi2 += 3; }
+        if (_itp[vi2] && /^h/i.test(_itp[vi2]) && _itp[vi2 + 1]) { vg.hold = parseInt(_itp[vi2 + 1], 10); vi2 += 2; }
+      }
+      if (_ifNo) { vg.state = "Init"; }
+      else vg.state = "Master";
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     // 环路保护 / BPDU Guard
     if (ipt("loop-guard") || ipt("bpdu-guard")) {
       var lgOn = !_ifNo && (!_itp[1] || !/^d/i.test(_itp[1]));
@@ -984,12 +1133,13 @@ function execLine(ctx, rawLine) {
       });
       return { output: "", prompt: promptFor(dev, sess) };
     }
-    // interface 嵌套切换
+    // interface 嵌套切换：直接透传 ctx，避免手工列举字段漏掉新能力（如 stream）
     if (/^interface\b/i.test(line)) {
       sess.mode = "global";
-      var r2 = execLine({ devices: ctx.devices, links: ctx.links, dev: dev, sess: sess, ping: ctx.ping, tracert: ctx.tracert, telnetTo: ctx.telnetTo, stpInfo: ctx.stpInfo, refreshStp: ctx.refreshStp, factoryReset: ctx.factoryReset }, line.replace(/^interface/i, "interface"));
-      // 上面已把mode切到global又执行了一次，会进global分支；简化直接处理
-      return r2;
+      var sub = {}, k;
+      for (k in ctx) if (Object.prototype.hasOwnProperty.call(ctx, k)) sub[k] = ctx[k];
+      sub.dev = dev; sub.sess = sess;
+      return execLine(sub, line);
     }
     return { output: "% 未知接口命令（输入 ? 查看；支持缩写如 swi mode acc / no shut / ip add）", prompt: promptFor(dev, sess) };
   }
@@ -1008,6 +1158,88 @@ function execLine(ctx, rawLine) {
       return { output: "", prompt: promptFor(dev, sess) };
     }
     return { output: "% vlan模式：name / switchport interface（?查看）", prompt: promptFor(dev, sess) };
+  }
+  // ===== ACL 配置模式 =====
+  if (sess.mode === "acl") {
+    var lst = dev.acl.lists[sess.aclId];
+    if (/^exit$/i.test(line)) { sess.mode = "global"; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^no\s+ip\s+access-list\s+(\d+)$/i.test(line)) {
+      delete dev.acl.lists[sess.aclId]; sess.mode = "global";
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // remark 描述
+    var rmk = line.match(/^remark\s+(.+)$/i);
+    if (rmk) { lst.name = rmk[1].trim(); return { output: "", prompt: promptFor(dev, sess) }; }
+    // 规则： [seq <n>] permit|deny <proto> <src> [srcwild] <dst> [dstwild] [eq port] [log]
+    var aclRule = line.match(/^(?:seq\s+(\d+)\s+)?(permit|deny)\s+(.+)$/i);
+    if (aclRule) {
+      var seq = aclRule[1] ? parseInt(aclRule[1], 10) : ((lst.rules.length ? Math.max.apply(null, lst.rules.map(function (r) { return r.seq || 0; })) : 0) + 10);
+      var body = aclRule[3].trim();
+      var action = aclRule[2].toLowerCase();
+      // 拆出 log
+      var hasLog = false;
+      if (/\blog\b/i.test(body)) { hasLog = true; body = body.replace(/\blog\b/i, "").trim(); }
+      var bT = body.split(/\s+/);
+      // 协议
+      var proto = "ip";
+      if (/^(tcp|udp|ip|icmp|any)$/i.test(bT[0])) {
+        proto = bT[0].toLowerCase() === "any" ? "any" : bT[0].toLowerCase();
+        bT = bT.slice(1);
+      }
+      // 源地址（可带通配符）
+      var src = "any", dst = "any", srcWild = null, dstWild = null, ports = null, srcPorts = null;
+      var vi = 0;
+      if (bT[vi]) { src = bT[vi]; vi++; if (bT[vi] && /^\d+\.\d+\.\d+\.\d+$/.test(bT[vi])) { srcWild = bT[vi]; vi++; } }
+      if (bT[vi]) { dst = bT[vi]; vi++; if (bT[vi] && /^\d+\.\d+\.\d+\.\d+$/.test(bT[vi])) { dstWild = bT[vi]; vi++; } }
+      // eq / gt / lt 端口
+      var eqm = body.match(/\b(eq|gt|lt)\s+(\d+)\b/i);
+      if (eqm) {
+        if (eqm[1].toLowerCase() === "eq") ports = (eqm[2] === "eq" ? eqm[2] : eqm[2]) + " " + eqm[2];
+        else if (eqm[1].toLowerCase() === "gt") ports = (+eqm[2] + 1) + " 65535";
+        else ports = "0 " + (+eqm[2] - 1);
+      }
+      var srcm = body.match(/\bsource-port\s+(\d+)\s+(\d+)/i);
+      if (srcm) srcPorts = srcm[1] + " " + srcm[2];
+      // vlan 限定
+      var vlm2 = body.match(/\bvlan\s+(\d+)/i);
+      var vlanCond = vlm2 ? parseInt(vlm2[1], 10) : null;
+      // 目的地址规范化：带通配符时合成 "net wild"
+      function normPair(ip, wild) {
+        if (wild) return ip + " " + wild;
+        if (ip === "any") return "any";
+        // 无通配符视为 /32 主机
+        return ip + " 255.255.255.255";
+      }
+      var rule = {
+        seq: seq, action: action, proto: proto,
+        src: normPair(src, srcWild), dst: normPair(dst, dstWild),
+        ports: ports, srcPorts: srcPorts, vlan: vlanCond, log: hasLog
+      };
+      // 覆盖同 seq
+      lst.rules = lst.rules.filter(function (r) { return r.seq !== seq; });
+      lst.rules.push(rule);
+      lst.rules.sort(function (a, b) { return a.seq - b.seq; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    return { output: "% ACL模式：seq <n> permit|deny <proto> <src> <dst> [eq <port>] [log] / remark <描述> / exit", prompt: promptFor(dev, sess) };
+  }
+  // ===== DHCP pool 配置模式 =====
+  if (sess.mode === "dhcp-pool") {
+    var pool = dev.dhcp.pools[sess.dhcpPool];
+    if (/^exit$/i.test(line)) { sess.mode = "global"; return { output: "", prompt: promptFor(dev, sess) }; }
+    var pn3 = line.match(/^network\s+(\S+)\s+(\S+)$/i);
+    if (pn3) { pool.network = pn3[1]; pool.mask = pn3[2]; return { output: "", prompt: promptFor(dev, sess) }; }
+    var dr3 = line.match(/^default-router\s+(\S+)$/i);
+    if (dr3) { pool.gateway = dr3[1]; return { output: "", prompt: promptFor(dev, sess) }; }
+    var dns3 = line.match(/^dns-server\s+(.+)$/i);
+    if (dns3) { pool.dns = dns3[1].trim(); return { output: "", prompt: promptFor(dev, sess) }; }
+    var ls3 = line.match(/^lease\s+(\d+)$/i);
+    if (ls3) { pool.lease = parseInt(ls3[1], 10); return { output: "", prompt: promptFor(dev, sess) }; }
+    var rg3 = line.match(/^range\s+(\S+)\s+(\S+)$/i);
+    if (rg3) { pool.start = rg3[1]; pool.end = rg3[2]; return { output: "", prompt: promptFor(dev, sess) }; }
+    var vl3 = line.match(/^vlan\s+(\d+)$/i);
+    if (vl3) { pool.vlan = parseInt(vl3[1], 10); return { output: "", prompt: promptFor(dev, sess) }; }
+    return { output: "% DHCP池模式：network <网段> <掩码> / default-router <网关> / dns-server <IP> / lease <秒> / range <起> <止> / exit", prompt: promptFor(dev, sess) };
   }
   // ===== mstp region =====
   if (sess.mode === "mstp") {

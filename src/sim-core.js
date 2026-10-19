@@ -98,22 +98,36 @@ function normalizePort(input) {
   return null;
 }
 function expandPortRange(input) {
-  // 支持 e1/0/1-4 / e1/0/1-2,4 / 1-4(在interface range上下文中由调用方补前缀)
+  // 支持 e1/0/1-4 / e1/0/1-2,4 / e1/0/1,3,5 / 1-4（interface range 上下文由调用方补前缀）
+  // 逗号/分号分隔多片段；裸数字自动继承前一片段的前缀
   var s = String(input).trim();
-  var base = s.match(/^(.*?(\d+))(-(\d+))?$/);
-  // 更精确：找最后一段数字范围
-  var m = s.match(/^(.*?)(\d+)-(\d+)$/);
-  if (m) {
-    var prefix = m[1], start = parseInt(m[2], 10), end = parseInt(m[3], 10);
-    var out = [];
-    for (var i = start; i <= end; i++) {
-      var n = normalizePort(prefix + i);
-      if (n) out.push(n);
+  if (!s) return [];
+  var out = [];
+  var prefix = "";
+  var parts = s.split(/[,;]/);
+  for (var pi = 0; pi < parts.length; pi++) {
+    var part = parts[pi].trim();
+    if (!part) continue;
+    // 记住这一段里的端口名前缀（形如 e1/0/）
+    var pm = part.match(/^([a-z]+\d+\/\d+\/|[a-z]+\d+\/)/i);
+    if (pm) prefix = pm[1];
+    var m = part.match(/^(.*?)(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      var pre = m[1] || prefix;
+      var start = parseInt(m[2], 10), end = parseInt(m[3], 10);
+      if (start > end) { var t = start; start = end; end = t; }  // 容错逆序写法
+      if (end - start > 512) end = start + 512;                   // 上限保护，防误输入卡死
+      for (var i = start; i <= end; i++) {
+        var n = normalizePort(pre + i);
+        if (n && out.indexOf(n) < 0) out.push(n);
+      }
+      continue;
     }
-    return out;
+    var bare = part.match(/^(\d+)$/);
+    var single = bare ? normalizePort(prefix + bare[1]) : normalizePort(part);
+    if (single && out.indexOf(single) < 0) out.push(single);
   }
-  var single = normalizePort(s);
-  return single ? [single] : [];
+  return out;
 }
 
 // ---------- 设备创建 ----------
@@ -188,7 +202,18 @@ function createDevice(type, name, x, y) {
     agingTime: 300,     // MAC 老化时间（秒）
     lldp: { enabled: false },
     snmp: { enabled: false, community: null, contact: null, location: null },
-    loopGuard: { enabled: false }
+    loopGuard: { enabled: false },
+    // ---- ACL（访问控制列表）----
+    // 数字范围 1-99 / 100-199 / 1000-1999 预留
+    acl: { lists: {} },   // listId -> {id, name, rules:[{seq,action,proto,src,dst,ports,vlan,log}], applied:{}}
+    // ---- VRRP（网关冗余）----
+    vrrp: { groups: {} },  // vrid -> {vrid, ip, priority, timers, virtualMac, state, master, peers:{}}
+    // ---- DHCP 服务器 ----
+    dhcp: { enabled: false, pools: {}, excluded: [], bindings: {} },
+    //   pools: poolName -> {name, network, mask, gateway, dns, lease, start, end, vlan}
+    //   bindings: mac -> {ip, pool, lease, expire}
+    // ---- NAT ----
+    nat: { enabled: false, inside: [], outside: [], overload: false, translations: {} }
   };
   if (type === "l2" || type === "l3" || type === "router") {
     // 默认所有access口在vlan1
@@ -334,7 +359,7 @@ function devById(list, id) {
 }
 function isStpBlocked(dev, port, stpInfo) {
   if (!dev.stp.enabled) return false;
-  var r = stpInfo && stpInfo.roles[dev.id + ":" + port];
+  var r = (stpInfo && stpInfo.roles) ? stpInfo.roles[dev.id + ":" + port] : null;
   return r ? r.state === "BLK" : false;
 }
 
@@ -373,23 +398,30 @@ function buildRouteTable(dev, allDevices, links) {
   connectedNets(dev).forEach(function (n) {
     table.push({ proto: "C", dest: n.net, mask: n.mask, nextHop: "direct", port: n.port, dist: 0 });
   });
-  dev.staticRoutes.forEach(function (r) {
+  // 静态路由：字段缺失时按空处理，避免非 createDevice 构造的对象导致崩溃
+  (dev.staticRoutes || []).forEach(function (r) {
+    if (!r || !r.dest || !r.mask) return;
     table.push({ proto: r.dest === "0.0.0.0" ? "S*" : "S", dest: r.dest, mask: r.mask, nextHop: r.nextHop, port: "-", dist: r.dist || 1 });
   });
   // RIP/ OSPF 学习：若全网拓扑物理连通且协议配置正确，则学习到远端直连网段
-  var ripOn = dev.type === "router" ? (dev.rip.enabled && Object.keys(dev.rip.enabledIfs).length > 0) :
-    dev.type === "l3" ? (dev.rip.enabled && dev.rip.networks.length > 0) : false;
-  var ospfOn = dev.ospf.enabled && dev.ospf.networks.length > 0;
+  // 协议字段防御：非 createDevice 构造的对象可能没有 rip/ospf 字段
+  var _rip = dev.rip || { enabled: false, enabledIfs: {}, networks: [] };
+  var _ospf = dev.ospf || { enabled: false, networks: [] };
+  var ripOn = dev.type === "router" ? (_rip.enabled && Object.keys(_rip.enabledIfs || {}).length > 0) :
+    dev.type === "l3" ? (_rip.enabled && (_rip.networks || []).length > 0) : false;
+  var ospfOn = !!(_ospf.enabled && (_ospf.networks || []).length > 0);
   if (ripOn || ospfOn) {
     // 简化：学习所有其他设备的直连网段（假设 area 0 / version 2 / auto-summary 正确）
     allDevices.forEach(function (other) {
       if (other.id === dev.id) return;
       // 对端也必须真正跑起协议：路由器至少一个口使能 RIP 或宣告了 OSPF；三层需 network 已配
+      var oRip = other.rip || { enabled: false, enabledIfs: {}, networks: [] };
+      var oOspf = other.ospf || { enabled: false, networks: [] };
       var otherRip = (other.type === "router")
-        ? (other.rip.enabled && Object.keys(other.rip.enabledIfs).length > 0)
-        : (other.type === "l3" ? (other.rip.enabled && other.rip.networks.length > 0) : false);
+        ? (oRip.enabled && Object.keys(oRip.enabledIfs || {}).length > 0)
+        : (other.type === "l3" ? (oRip.enabled && (oRip.networks || []).length > 0) : false);
       var otherOspf = (other.type === "router" || other.type === "l3")
-        ? (other.ospf.enabled && other.ospf.networks.length > 0) : false;
+        ? (oOspf.enabled && (oOspf.networks || []).length > 0) : false;
       var otherOn = otherRip || otherOspf;
       // 三层交换机的vlan网段需要宣告才被学习；简化要求双方都开协议
       if (!otherOn && other.type !== "pc") {
@@ -566,6 +598,132 @@ function linkOperUp(allDevices, link, stpInfo) {
 }
 
 // 核心：从srcDev ping dstIp，BFS跨L2/L3，返回 {ok, path:[{dev,via,ip}], reason}
+// ================= ACL 访问控制列表 =================
+// 规则结构：{seq, action:'permit'|'deny', proto:'ip'|'tcp'|'udp'|'any',
+//            src, dst, ports, vlan, log}
+// src/dst 形如 "192.168.1.0 0.0.0.255"（网络+反掩码），"any" 表示任意
+function aclIpMatch(rule, ip) {
+  var v = ipToInt(ip);
+  if (v === null) return false;
+  var parts = String(rule || "").split(/\s+/);
+  var net = parts[0], mask = parts[1] || "0.0.0.0";
+  if (!net || net.toLowerCase() === "any") return true;
+  if (net.indexOf(":") >= 0) return false;         // IPv6 不在课程范围
+  var n = ipToInt(net), m = ipToInt(mask);
+  if (n === null || m === null) return false;
+  // ACL 用的是「反掩码」(wildcard mask)：0 表示必须匹配，1 表示忽略该位
+  // 例：192.168.1.0 0.0.0.255 匹配整个 /24
+  var keep = (~m) >>> 0;
+  return ((v & keep) >>> 0) === ((n & keep) >>> 0);
+}
+function aclRuleMatch(rule, pkt) {
+  // 协议
+  if (rule.proto && rule.proto !== "any") {
+    if (rule.proto !== (pkt.proto || "ip")) return false;
+  }
+  // 源地址
+  if (!aclIpMatch(rule.src, pkt.srcIp)) return false;
+  // 目的地址
+  if (!aclIpMatch(rule.dst, pkt.dstIp)) return false;
+  // 端口（仅 TCP/UDP 有意义）
+  if (rule.ports) {
+    var m = String(rule.ports).match(/^(\S+)\s+(\S+)$/);
+    if (m) {
+      var lo = m[1], hi = m[2];
+      if (lo !== "any" && hi !== "any") {
+        var pl = parseInt(lo, 10), ph = parseInt(hi, 10);
+        var sp = parseInt(pkt.srcPort, 10), dp = parseInt(pkt.dstPort, 10);
+        if (!isNaN(pl) && !isNaN(ph) && !isNaN(sp) && !isNaN(dp)) {
+          if (!(sp >= pl && sp <= ph) && !(dp >= pl && dp <= ph)) return false;
+        }
+      }
+    }
+  }
+  // 源端口限制
+  if (rule.srcPorts) {
+    var ms = String(rule.srcPorts).match(/^(\d+)\s+(\d+)$/);
+    if (ms) {
+      var sl = parseInt(ms[1], 10), sh = parseInt(ms[2], 10);
+      var sp2 = parseInt(pkt.srcPort, 10);
+      if (!isNaN(sl) && !isNaN(sh) && !isNaN(sp2) && !(sp2 >= sl && sp2 <= sh)) return false;
+    }
+  }
+  // VLAN
+  if (rule.vlan !== undefined && rule.vlan !== null && rule.vlan !== "any") {
+    if (String(rule.vlan) !== String(pkt.vlan)) return false;
+  }
+  return true;
+}
+// 对给定报文求 ACL 裁决：返回 'permit' | 'deny' | null(无规则命中)
+// 真机语义：自上而下首次匹配即决定；列表末尾隐含 deny（若无 permit any）
+function aclDecide(dev, pkt, inPort) {
+  var lists = dev.acl && dev.acl.lists;
+  if (!lists) return null;
+  // 已应用的 ACL：按应用位置（全局/接口/VLAN）依次求值
+  var applied = [];
+  var a = dev.acl.applied || {};
+  if (a.global) applied.push(a.global);
+  if (inPort && a.port && a.port[inPort]) applied.push(a.port[inPort]);
+  if (pkt.vlan !== undefined && pkt.vlan !== null && a.vlan && a.vlan[String(pkt.vlan)]) applied.push(a.vlan[String(pkt.vlan)]);
+  for (var i = 0; i < applied.length; i++) {
+    var lst = lists[applied[i]];
+    if (!lst) continue;
+    var rules = lst.rules.slice().sort(function (x, y) { return (x.seq || 0) - (y.seq || 0); });
+    for (var j = 0; j < rules.length; j++) {
+      if (aclRuleMatch(rules[j], pkt)) {
+        if (rules[j].log) {
+          dev.acl.logCount = (dev.acl.logCount || 0) + 1;
+          dev.acl.lastHit = { list: applied[i], seq: rules[j].seq, action: rules[j].action, at: Date.now() };
+        }
+        return rules[j].action;
+      }
+    }
+  }
+  return null;   // 无命中：放行（交由上层默认策略决定）
+}
+function showAcl(dev) {
+  var lists = (dev.acl && dev.acl.lists) || {};
+  var ids = Object.keys(lists);
+  if (!ids.length) return "% 未配置 ACL（配置示例：ip access-list extended 10 / permit ip 192.168.1.0 0.0.0.255 any / deny ip any any）";
+  var L = [];
+  ids.sort(function (a, b) { return parseInt(a, 10) - parseInt(b, 10); });
+  ids.forEach(function (id) {
+    var l = lists[id];
+    L.push("ACL " + id + (l.name ? " (" + l.name + ")" : ""));
+    var rules = l.rules.slice().sort(function (x, y) { return (x.seq || 0) - (y.seq || 0); });
+    if (!rules.length) L.push("  （空）");
+    rules.forEach(function (r) {
+      var line = "  " + String(r.seq || 10).padEnd(4, " ") + (r.action === "permit" ? "permit " : "deny   ");
+      line += (r.proto || "ip").padEnd(6, " ");
+      line += (r.src || "any").padEnd(24, " ");
+      line += (r.dst || "any");
+      if (r.ports) line += " " + r.ports;
+      if (r.vlan !== undefined && r.vlan !== null) line += " vlan " + r.vlan;
+      if (r.log) line += " log";
+      L.push(line);
+    });
+    // 应用位置
+    var where = [];
+    var a = dev.acl.applied || {};
+    if (a.global === id) where.push("global");
+    if (a.port) Object.keys(a.port).forEach(function (p) { if (a.port[p] === id) where.push("interface " + p); });
+    if (a.vlan) Object.keys(a.vlan).forEach(function (v) { if (a.vlan[v] === id) where.push("vlan " + v); });
+    L.push(where.length ? "  Applied: " + where.join(", ") : "  （未应用）");
+    L.push("");
+  });
+  if (dev.acl.logCount) L.push("命中计数: " + dev.acl.logCount + " 条（带 log 的规则）");
+  return L.join("\n");
+}
+function showAclBrief(dev) {
+  var lists = (dev.acl && dev.acl.lists) || {};
+  var ids = Object.keys(lists);
+  if (!ids.length) return "% No ACL configured";
+  var L = ["Number of ACLs: " + ids.length];
+  ids.sort(function (a, b) { return parseInt(a, 10) - parseInt(b, 10); }).forEach(function (id) {
+    L.push("  " + id.padEnd(6, " ") + lists[id].rules.length + " rule(s)");
+  });
+  return L.join("\n");
+}
 function portAllows(dev, port, vlan) {
   var p = dev.ports[port];
   if (!p || p.shutdown || p.violated) return false;
@@ -594,6 +752,7 @@ function edgeVlan(dev, allDevices, links) {
 function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
   stpInfo = stpInfo || stpCompute(allDevices, links);
   dstIp = String(dstIp).trim();
+  if (!srcDev) return { ok: false, reason: "无源设备", path: [] };
   if (ipToInt(dstIp) === null) return { ok: false, reason: "无效IP地址", path: [] };
   // 广播风暴：环路占满带宽，业务流量无法正常收发（真实设备表现）
   if (detectStorm(allDevices, links, stpInfo)) {
@@ -612,12 +771,18 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     var has = Object.keys(d.ports).some(function (pn) { return d.ports[pn].isolateGroup; });
     if (has) isoDevs[d.id] = true;
   });
+  // 源身份在整次 BFS 中恒定：起点设备的 MAC 与源 IP（供入向安全检查使用）
+  var srcMac = (srcDev.type === "pc" && srcDev.pcMac) ? srcDev.pcMac
+    : (srcDev.mac || null);
+  var srcIp = (srcDev.type === "pc" && srcDev.pcIp) ? srcDev.pcIp
+    : (deviceIpList(srcDev)[0] || null);
   function push(devId, vlan, path, fromPort) {
     var k = devId + "|" + (vlan === null || vlan === undefined ? "-" : vlan);
     if (isoDevs[devId]) k += "|" + (fromPort || "-");
     if (visited[k]) return false;
     visited[k] = true;
-    queue.push({ devId: devId, vlan: vlan, path: path, fromPort: fromPort || null });
+    queue.push({ devId: devId, vlan: vlan, path: path, fromPort: fromPort || null,
+      srcMac: srcMac, srcIp: srcIp });
     return true;
   }
   // 起点：PC 从所接端口进入 vlan；交换机/路由 CLI 发起为无标签
@@ -650,6 +815,26 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     if (dev.type === "l2") {
       // 二层：只在同一 vlan 内泛洪，且收发端口都要放行该 vlan、未被 STP 阻断
       var vlan = (cur.vlan === null || cur.vlan === undefined) ? 1 : cur.vlan;
+      // ---- 入向安全检查：DHCP Snooping（防欺骗）与 DAI（防 ARP 中间人）----
+      if (cur.srcIp && cur.fromPort && dev.ports[cur.fromPort]) {
+        var guard = ingressGuard(dev, cur.fromPort, cur.srcMac, cur.srcIp, vlan);
+        if (guard) return { ok: false, path: [], reason: guard };
+      }
+      // ---- ACL 入向裁决：命中 deny 则丢弃该报文 ----
+      if (cur.srcIp && cur.fromPort) {
+        var aclPkt = {
+          srcIp: cur.srcIp, dstIp: dstIp, proto: "ip", vlan: vlan,
+          srcPort: 0, dstPort: 0, inPort: cur.fromPort
+        };
+        var aclAct = aclDecide(dev, aclPkt, cur.fromPort);
+        if (aclAct === "deny") {
+          return {
+            ok: false, path: [],
+            reason: "ACL 阻断：报文 " + cur.srcIp + " → " + dstIp + " 被 " +
+              dev.hostname + " 上的访问控制列表拒绝（deny）"
+          };
+        }
+      }
       var ports = Object.keys(dev.ports);
       for (var i = 0; i < ports.length; i++) {
         var pn = ports[i];
@@ -954,7 +1139,7 @@ function showSpanningTree(dev, stpInfo) {
   lines.push(" -------------- ------- --------- --------- --- ---- ------------------ -------");
   Object.keys(dev.ports).forEach(function (pn) {
     if (pn.indexOf("e") !== 0) return;
-    var r = stpInfo && stpInfo.roles[dev.id + ":" + pn];
+    var r = (stpInfo && stpInfo.roles) ? stpInfo.roles[dev.id + ":" + pn] : null;
     var state = r ? r.state : "FWD", role = r ? (r.role === "ROOT" ? "ROOT" : r.role === "DSGN" ? "DSGN" : "ALTR") : "DSGN";
     lines.push(("  Ethernet" + pn.substr(1)).padEnd(16, " ") + "128.001         0         0 " + state + " " + role);
   });
@@ -1081,16 +1266,23 @@ function showArpInspection(dev) {
   });
   return L.join("\n");
 }
-// ARP 欺骗检测：需 DAI 开启且该 VLAN 已启用，否则放行
+// ARP 欺骗检测：需 DAI 开启且该 VLAN 已启用，否则放行。
+// 双向比对（与真机 DAI 一致）：
+//   1) 该 MAC 的绑定 IP 不是本 IP  → 冒用他人身份
+//   2) 该 IP 已绑定给别的 MAC      → 伪造他人地址（主要攻击面）
+//   3) 双向都没有绑定信息          → 放行（真机同样放行未纳管主机）
 function checkArpViolation(dev, vlan, ipMacPairs) {
   if (!dev.arpInspection.enabled) return false;
   var v = String(vlan);
   if (!dev.arpInspection.perVlan[v]) return false;
   var binds = dev.dhcpSnooping.bindings || {};
-  return ipMacPairs.some(function (p) {
-    var b = binds[p.mac];
-    if (!b) return false;                      // 无 DHCP 绑定信息则不判违例
-    return b.ip !== p.ip;                      // MAC/IP 不匹配 → 欺骗
+  return (ipMacPairs || []).some(function (p) {
+    if (!p || !p.mac || !p.ip) return false;
+    var byMac = binds[p.mac];
+    if (byMac && byMac.ip !== p.ip) return true;
+    var byIp = null;
+    for (var k in binds) { if (binds[k].ip === p.ip) { byIp = k; break; } }
+    return !!byIp && byIp !== p.mac;
   });
 }
 
@@ -1177,6 +1369,182 @@ function showSnmp(dev) {
   return L.join("\n");
 }
 
+// 二层入向安全守卫：DHCP Snooping 防欺骗 + DAI 防 ARP 中间人
+// 返回 null 表示放行，否则返回阻断原因（真机行为）
+function ingressGuard(dev, port, srcMac, srcIp, vlan) {
+  if (!dev.dhcpSnooping.enabled && !dev.arpInspection.enabled) return null;
+  var p = dev.ports[port];
+  if (!p || p.shutdown) return null;
+  // 首次见到 (mac,ip,port) 组合时写入 DHCP 绑定表，等价于从信任口拿到 lease
+  var binds = dev.dhcpSnooping.bindings;
+  var known = srcMac ? binds[srcMac] : null;
+  if (dev.dhcpSnooping.enabled && srcMac && srcIp) {
+    if (!known) binds[srcMac] = { ip: srcIp, port: port, vlan: vlan };
+    else if (known.ip !== srcIp) {
+      // 同一 MAC 换 IP / 同 IP 换 MAC —— 未信任口上的典型 DHCP 欺骗
+      if (!p.trust) return "DHCP Snooping 阻断：" + portLabel(port) + " 上 " +
+        srcMac + " 声称拥有 " + srcIp + "，但绑定表记录的是 " + known.ip + "（伪造 DHCP 响应）";
+    }
+  }
+  // DAI：需 DHCP 绑定信息可比对，否则不判违例（真机同样放行未知主机）
+  if (dev.arpInspection.enabled && dev.arpInspection.perVlan[String(vlan)]) {
+    var pairs = srcMac && srcIp ? [{ mac: srcMac, ip: srcIp }] : [];
+    if (checkArpViolation(dev, vlan, pairs)) {
+      var b = binds[srcMac];
+      return "ARP 检测(DAI)阻断：" + portLabel(port) + " 上 " + srcMac +
+        " 声称 " + srcIp + " 为本机，但绑定表记录 " + (b ? b.ip : "未知") + "（ARP 中间人攻击）";
+    }
+  }
+  return null;
+}
+// ================= VRRP 虚拟路由冗余 =================
+// 选举：同 vrid 同虚 IP 的设备按 priority 大者为主；同优先级比 IP 大者为主
+// 真机规则：priority 大者为 Master；相同则比较接口 IP，IP 大者为 Master
+function vrrpElect(allDevices, links, vrid) {
+  var cands = [];
+  allDevices.forEach(function (d) {
+    var g = d.vrrp && d.vrrp.groups && d.vrrp.groups[String(vrid)];
+    if (!g) return;
+    cands.push({ dev: d, g: g });
+  });
+  if (!cands.length) return null;
+  // 候选者必须两两可达（同一 vlan 内二层连通）
+  var reach = [];
+  cands.forEach(function (c) {
+    var ok = cands.every(function (o) {
+      if (o === c) return true;
+      return vrrpPeersReach(allDevices, links, c.dev, o.dev, c.g.ip);
+    });
+    if (ok) reach.push(c);
+  });
+  if (!reach.length) reach = cands;
+  reach.sort(function (a, b) {
+    var pa = a.g.priority || 100, pb = b.g.priority || 100;
+    if (pa !== pb) return pb - pa;                         // priority 大者为主
+    var ia = vrrpOwnIp(a), ib = vrrpOwnIp(b);
+    if (ia !== ib) return ipToInt(ib) - ipToInt(ia);      // 同优先级 IP 大者为主
+    return (a.dev.mac || "").localeCompare(b.dev.mac || "");
+  });
+  return reach[0];
+}
+function vrrpOwnIp(c) {
+  var g = c.g;
+  if (g.interface && c.dev.ifIp && c.dev.ifIp[g.interface]) return c.dev.ifIp[g.interface].ip;
+  if (g.interface && c.dev.vlanIf && c.dev.vlanIf[String(g.interface).replace("vlan", "")]) {
+    return c.dev.vlanIf[String(g.interface).replace("vlan", "")].ip;
+  }
+  return c.dev.mgmtIp || "";
+}
+// 两台设备是否二层可达（用于判断 VRRP 候选者是否互相看得见）
+// 判据：双方接口 IP 处于同一子网（真机还需链路 up，此处按同网段近似）
+function vrrpPeersReach(allDevices, links, a, b, vip) {
+  var ga = (a.vrrp.groups && Object.values(a.vrrp.groups)[0]) || {};
+  var gb = (b.vrrp.groups && Object.values(b.vrrp.groups)[0]) || {};
+  var sa = vrrpOwnIp({ dev: a, g: ga }), sb = vrrpOwnIp({ dev: b, g: gb });
+  if (!sa || !sb) return false;
+  var ma = vrrpMaskOf(a, ga), mb = vrrpMaskOf(b, gb);
+  if (ma && mb && ma === mb) return sameSubnet(sa, sb, ma);
+  return sameSubnet(sa, sb, "255.255.255.0");
+}
+function vrrpMaskOf(dev, g) {
+  if (g.interface && dev.ifIp && dev.ifIp[g.interface]) return dev.ifIp[g.interface].mask;
+  if (g.interface && dev.vlanIf && dev.vlanIf[String(g.interface).replace("vlan", "")]) {
+    return dev.vlanIf[String(g.interface).replace("vlan", "")].mask;
+  }
+  return dev.mgmtMask || null;
+}
+// 取某设备在某 vrid 上的虚 IP（若为主机则该虚 IP 就是网关）
+function vrrpVirtualIp(allDevices, links, vrid) {
+  var cands = [];
+  allDevices.forEach(function (d) {
+    var g = d.vrrp && d.vrrp.groups && d.vrrp.groups[String(vrid)];
+    if (g) cands.push({ dev: d, g: g });
+  });
+  if (!cands.length) return null;
+  var master = vrrpElect(allDevices, links, vrid);
+  if (!master) return null;
+  return { ip: master.g.ip, master: master.dev, vrid: vrid };
+}
+function showVrrp(dev, allDevices, links) {
+  var groups = (dev.vrrp && dev.vrrp.groups) || {};
+  var ids = Object.keys(groups);
+  if (!ids.length) return "% 未配置 VRRP（配置示例：interface vlan 10 / vrrp 1 ip 192.168.1.254 / vrrp 1 priority 120）";
+  var L = [];
+  ids.sort(function (a, b) { return parseInt(a, 10) - parseInt(b, 10); }).forEach(function (id) {
+    var g = groups[id];
+    L.push("VRRP Group " + id);
+    L.push("  State        : " + (g.state || "Init"));
+    L.push("  Virtual IP   : " + g.ip);
+    L.push("  Priority     : " + (g.priority || 100));
+    L.push("  Hold Time    : " + (g.hold || 3) + " 秒");
+    L.push("  Advert Int   : " + (g.advert || 1) + " 秒");
+    L.push("  Virtual MAC  : " + (g.virtualMac || "00:00:5e:00:01:" + (parseInt(id, 10) < 10 ? "0" : "") + id));
+    L.push("  Master IP    : " + (g.masterIp || "(未选举)"));
+    L.push("  Interface    : " + (g.interface || "(全局)"));
+    L.push("");
+  });
+  if (allDevices && links) {
+    var master = vrrpElect(allDevices, links, ids[0]);
+    if (master) L.push("当前 Master: " + master.dev.hostname + "（虚 IP " + master.g.ip + "）");
+  }
+  return L.join("\n");
+}
+// ================= DHCP 服务器 =================
+// 地址池分配：跳过 excluded 与已占用地址
+function dhcpAllocate(dev, mac, poolName) {
+  if (!dev.dhcp || !dev.dhcp.enabled) return null;
+  var pools = dev.dhcp.pools;
+  var pool = poolName ? pools[poolName] : pools[Object.keys(pools)[0]];
+  if (!pool) return null;
+  var excluded = (dev.dhcp.excluded || []).map(function (e) { return ipToInt(e); });
+  var used = {};
+  Object.keys(dev.dhcp.bindings).forEach(function (m) { used[ipToInt(dev.dhcp.bindings[m].ip)] = m; });
+  var net = ipToInt(pool.network), mask = ipToInt(pool.mask);
+  if (net === null || mask === null) return null;
+  var start = ipToInt(pool.start || pool.network), end = ipToInt(pool.end || pool.network);
+  if (start > end) { var t = start; start = end; end = t; }
+  for (var v = start; v <= end; v++) {
+    if (excluded.indexOf(v) >= 0) continue;
+    if (used[v]) continue;
+    var ip = intToIp(v);
+    var rec = { ip: ip, pool: pool.name, lease: pool.lease || 3600, expire: Date.now() + (pool.lease || 3600) * 1000 };
+    dev.dhcp.bindings[mac] = rec;
+    return rec;
+  }
+  return null;
+}
+function showDhcpPool(dev) {
+  if (!dev.dhcp || !dev.dhcp.enabled) return "% DHCP Server : disabled";
+  var pools = dev.dhcp.pools;
+  var ids = Object.keys(pools);
+  var L = ["DHCP Server : enabled", ""];
+  L.push("Pool name    Network            Gateway           DNS                 Range");
+  if (!ids.length) L.push("  （未配置地址池）");
+  ids.forEach(function (n) {
+    var p = pools[n];
+    L.push("  " + String(n).padEnd(12, " ") + String(p.network + " " + p.mask).padEnd(19, " ") +
+      String(p.gateway || "-").padEnd(18, " ") + String(p.dns || "-").padEnd(20, " ") +
+      String(p.start || p.network) + " - " + String(p.end || p.network));
+    L.push("      租约 " + (p.lease || 3600) + " 秒" + (p.vlan ? "  vlan " + p.vlan : ""));
+  });
+  if ((dev.dhcp.excluded || []).length) {
+    L.push("");
+    L.push("Excluded addresses : " + dev.dhcp.excluded.join(", "));
+  }
+  return L.join("\n");
+}
+function showDhcpBinding(dev) {
+  var binds = (dev.dhcp && dev.dhcp.bindings) || {};
+  var ks = Object.keys(binds);
+  if (!ks.length) return "% 无 DHCP 绑定（客户端申请地址后出现）";
+  var L = ["IP Address       MAC Address        Lease  Pool"];
+  ks.forEach(function (m) {
+    var b = binds[m];
+    var left = Math.max(0, Math.round((b.expire - Date.now()) / 1000));
+    L.push("  " + String(b.ip).padEnd(16, " ") + m.padEnd(19, " ") + String(left + "s").padEnd(7, " ") + b.pool);
+  });
+  return L.join("\n");
+}
 function showRunningConfig(dev) {
   var lines = ["Current configuration:", "!", "hostname " + dev.hostname];
   if (dev.enablePassword) lines.push("enable password level 15 " + dev.enablePassword);
@@ -1195,7 +1563,10 @@ function showRunningConfig(dev) {
       var c2 = dev.vlanIf[vid];
       lines.push("interface vlan" + vid); lines.push(" ip address " + c2.ip + " " + c2.mask);
     });
-    dev.staticRoutes.forEach(function (r) { lines.push("ip route " + r.dest + " " + r.mask + " " + r.nextHop + (r.dist && r.dist !== 1 ? " " + r.dist : "")); });
+    (dev.staticRoutes || []).forEach(function (r) {
+    if (!r || !r.dest) return;
+    lines.push("ip route " + r.dest + " " + r.mask + " " + r.nextHop + (r.dist && r.dist !== 1 ? " " + r.dist : ""));
+  });
     if (dev.rip.enabled) {
       lines.push("router rip " + (dev.rip.proc || 1)); lines.push(" version " + dev.rip.version);
       if (dev.rip.autoSummary) lines.push(" auto-summary");
@@ -1253,11 +1624,62 @@ function showRunningConfig(dev) {
     if (p.isolateGroup) extra.push("switchport isolate group " + p.isolateGroup);
     if (p.qosPrio) extra.push("switchport priority " + p.qosPrio);
     if (p.loopGuard) extra.push("loop-guard enable");
+    if (dev.acl && dev.acl.applied && dev.acl.applied.port && dev.acl.applied.port[pn]) {
+      extra.push("ip access-group " + dev.acl.applied.port[pn] + " in");
+    }
     if (!extra.length) return;
     lines.push("interface " + pn);
     extra.forEach(function (e) { lines.push(" " + e); });
     lines.push("exit");
   });
+  lines.push("!");
+  // ---- ACL ----
+  if (dev.acl && dev.acl.lists) {
+    Object.keys(dev.acl.lists).forEach(function (id) {
+      var l = dev.acl.lists[id];
+      lines.push("ip access-list " + (l.type || "extended") + " " + id);
+      if (l.name) lines.push(" remark " + l.name);
+      l.rules.forEach(function (r) {
+        var t = " " + r.seq + " " + r.action + " " + (r.proto || "ip") + " " + r.src + " " + r.dst;
+        if (r.ports) t += " " + r.ports;
+        if (r.srcPorts) t += " source-port " + r.srcPorts;
+        if (r.vlan !== undefined && r.vlan !== null) t += " vlan " + r.vlan;
+        if (r.log) t += " log";
+        lines.push(t);
+      });
+      lines.push("exit");
+    });
+  }
+  // ---- VRRP ----
+  if (dev.vrrp && dev.vrrp.groups) {
+    Object.keys(dev.vrrp.groups).forEach(function (id) {
+      var g = dev.vrrp.groups[id];
+      if (g.interface) lines.push("interface " + g.interface);
+      if (g.ip) lines.push(" vrrp " + id + " ip " + g.ip);
+      if (g.priority && g.priority !== 100) lines.push(" vrrp " + id + " priority " + g.priority);
+      if (g.advert !== 1 || g.hold !== 3) lines.push(" vrrp " + id + " timers advertise " + g.advert + " hold " + g.hold);
+      if (g.interface) lines.push("exit");
+    });
+  }
+  // ---- DHCP 服务器 ----
+  if (dev.dhcp && dev.dhcp.enabled) {
+    lines.push("service dhcp");
+    Object.keys(dev.dhcp.pools || {}).forEach(function (n) {
+      var p = dev.dhcp.pools[n];
+      lines.push("ip dhcp pool " + n);
+      if (p.network) lines.push(" network " + p.network + " " + p.mask);
+      if (p.gateway) lines.push(" default-router " + p.gateway);
+      if (p.dns) lines.push(" dns-server " + p.dns);
+      if (p.start) lines.push(" range " + p.start + " " + p.end);
+      if (p.lease) lines.push(" lease " + p.lease);
+      if (p.vlan) lines.push(" vlan " + p.vlan);
+      lines.push("exit");
+    });
+    if ((dev.dhcp.excluded || []).length) {
+      lines.push("ip dhcp excluded-address " + dev.dhcp.excluded[0] +
+        (dev.dhcp.excluded.length > 1 ? " " + dev.dhcp.excluded[dev.dhcp.excluded.length - 1] : ""));
+    }
+  }
   lines.push("!");
   lines.push("end");
   return lines.join("\n");
@@ -1265,7 +1687,25 @@ function showRunningConfig(dev) {
 
 // MAC 学习（ping/流量触发）
 function learnMac(dev, mac, port, vlan) {
-  dev.macTable[mac] = { port: port, vlan: vlan || 1, age: Date.now() };
+  var ex = dev.macTable[mac];
+  if (ex && ex.static) return ex;              // 静态绑定不被动态学习覆盖
+  // MAC 表项上限：满表后不再学习新地址（真机行为：未知单播泛洪加剧）
+  if (!ex && dev.macLimit && Object.keys(dev.macTable).length >= dev.macLimit) {
+    dev.macTableFull = true;
+    return null;
+  }
+  var rec = { port: port, vlan: vlan || 1, age: Date.now() };
+  dev.macTable[mac] = rec;
+  // 老化：超过 agingTime 的动态项自动清除
+  var maxAge = (dev.agingTime || 300) * 1000;
+  if (maxAge > 0) {
+    var now = Date.now(), ks = Object.keys(dev.macTable);
+    for (var i = 0; i < ks.length; i++) {
+      var e = dev.macTable[ks[i]];
+      if (e && !e.static && now - (e.age || 0) > maxAge) delete dev.macTable[ks[i]];
+    }
+  }
+  return rec;
 }
 
 function measurePing(allDevices, links, srcDev, dstIp, stpInfo) {
@@ -1313,7 +1753,14 @@ var api = {
   showArpInspection: showArpInspection, checkArpViolation: checkArpViolation,
   showPortIsolate: showPortIsolate, showQosPriority: showQosPriority,
   showLoopGuard: showLoopGuard, showStaticMac: showStaticMac, showMacAging: showMacAging,
-  showLldp: showLldp, showSnmp: showSnmp
+  showLldp: showLldp, showSnmp: showSnmp,
+  // ---- ACL ----
+  aclDecide: aclDecide, aclRuleMatch: aclRuleMatch, aclIpMatch: aclIpMatch,
+  showAcl: showAcl, showAclBrief: showAclBrief,
+  // ---- VRRP ----
+  vrrpElect: vrrpElect, showVrrp: showVrrp, vrrpVirtualIp: vrrpVirtualIp,
+  // ---- DHCP 服务器 ----
+  dhcpAllocate: dhcpAllocate, showDhcpPool: showDhcpPool, showDhcpBinding: showDhcpBinding
 };
 
 if (typeof module !== "undefined" && module.exports) module.exports = api;
