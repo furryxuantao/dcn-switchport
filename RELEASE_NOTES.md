@@ -28,6 +28,12 @@
   - 环路保护（`switchport loop-guard enable`、`loop-guard enable`）
   - 静态 MAC 绑定 / MAC 表上限 / 老化时间（`mac-address static`/`maximum`/`aging-time`）
   - LLDP 邻居发现、SNMP Agent、端口限速、`debug mirror`
+- **ACL 访问控制列表**：`ip access-list extended <编号>` → `seq <n> permit|deny <协议> <源> <目的> [eq 端口] [log]`，
+  接口下 `ip access-group <编号> in` 应用。**命中 deny 会真实阻断流量**（地址用反掩码，与真机一致）
+- **VRRP 网关冗余**：接口下 `vrrp <组号> ip <虚IP>`、`vrrp <组号> priority <1-254>`，
+  按优先级自动选举 Master，`show vrrp` 查看
+- **DHCP 服务器**：`service dhcp`、`ip dhcp pool <名>`（network / default-router / dns-server /
+  lease / range）、`ip dhcp excluded-address`，`show ip dhcp pool` 与 `show ip dhcp binding`
 
 ### 本地运行（无需 exe）
 直接用浏览器打开 `index.html` 即可，无需安装任何依赖。
@@ -41,7 +47,7 @@ src/cli-engine.js   DCN 命令解析与执行
 src/labs.js         16 个实验预设
 src/ui.js           界面与交互
 src/icons.js        图标映射（Lucide, ISC License）
-test/               自动化测试（320 项）
+test/               自动化测试（496 项）
 electron/           Electron 打包配置
 ```
 
@@ -50,10 +56,13 @@ electron/           Electron 打包配置
 node src\run-tests.js          # CLI 引擎单测（23 项）
 node test\cmd-audit.js         # 命令审计（70 项）
 node test\enterprise-test.js   # 企业级新功能（121 项）
+node test\runtime-behavior-test.js  # 运行时行为（42 项）
+node test\edge-case-test.js    # 边界与异常输入（56 项）
+node test\advanced-feature-test.js  # ACL/VRRP/DHCP（78 项）
 cd test; npm install; cd ..    # jsdom 依赖（仅页面测试需要）
 node test\answer-test.js       # 端到端（24 项）
 ```
-共 320 项自动化测试，全部通过。
+共 496 项自动化测试，全部通过。
 
 ### 图标许可
 [Lucide](https://lucide.dev) Icons，ISC License。

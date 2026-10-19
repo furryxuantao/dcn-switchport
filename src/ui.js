@@ -190,7 +190,8 @@ function ctxFor(dev) {
       pumpStream();
     },
     factoryReset: function (d) {
-      var fresh = Sim.createDevice(d.type, d.hostname, d.x, d.y); fresh.id = d.id;
+      // 恢复出厂设置：hostname 回到设备的出厂名（不能沿用改过的名字）
+      var fresh = Sim.createDevice(d.type, d.factoryName || null, d.x, d.y); fresh.id = d.id;
       Object.keys(fresh).forEach(function (k) { d[k] = fresh[k]; });
       sessions[d.id] = CLI.createSession(d); refreshStp();
     },
