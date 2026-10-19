@@ -176,10 +176,11 @@ node test\cisco-parity-1-test.js # 思科对标：二层增强 83 项
 node test\cisco-parity-2-test.js # 思科对标：三层增强 62 项
 node test\cisco-parity-3-test.js # 思科对标：运维管理 72 项
 node test\cisco-parity-4-test.js # 思科对标：NAT/PBR/环路检测 53 项
+node test\cisco-parity-audit-test.js # 新增代码专项审计 20 项
 node test\latency-storm-test.js
 ```
 
-共 864 项自动化测试，全部通过。
+共 884 项自动化测试，全部通过。
 
 跑无头页面测试（载入实验、点击交互、标准答案端到端）需要 jsdom：
 

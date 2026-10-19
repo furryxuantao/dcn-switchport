@@ -77,7 +77,7 @@ src/cli-engine.js   DCN 命令解析与执行
 src/labs.js         16 个实验预设
 src/ui.js           界面与交互
 src/icons.js        图标映射（Lucide, ISC License）
-test/               自动化测试（864 项）
+test/               自动化测试（884 项）
 electron/           Electron 打包配置
 ```
 
@@ -115,10 +115,11 @@ node test\cisco-parity-1-test.js # 思科对标：二层（83 项）
 node test\cisco-parity-2-test.js # 思科对标：三层（62 项）
 node test\cisco-parity-3-test.js # 思科对标：运维（72 项）
 node test\cisco-parity-4-test.js # 思科对标：NAT/PBR/环路（53 项）
+node test\cisco-parity-audit-test.js # 新增代码专项审计（20 项）
 cd test; npm install; cd ..    # jsdom 依赖（仅页面测试需要）
 node test\answer-test.js       # 端到端（24 项）
 ```
-共 864 项自动化测试，全部通过。
+共 884 项自动化测试，全部通过。
 
 ### 图标许可
 [Lucide](https://lucide.dev) Icons，ISC License。
