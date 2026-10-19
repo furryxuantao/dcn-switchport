@@ -1,9 +1,9 @@
-## 神州数码 DCN 网络模拟器 v1.2.0
+## 神州数码 DCN 网络模拟器 v1.3.0
 
 对标思科 Packet Tracer 的网络实验模拟器，命令与提示符严格对照本课程 PPT 与实验报告。
 
 ### 下载
-- `DCN-Simulator-1.2.0-portable.exe` — 绿色单文件版，Windows 64 位，双击即用，无需安装
+- `DCN-Simulator-1.3.0-portable.exe` — 绿色单文件版，Windows 64 位，双击即用，无需安装
 
 > 首次运行需解压约 30 秒（单文件 exe 会自解压到临时目录），窗口不会立刻出现属正常现象。
 > 未做代码签名，Windows SmartScreen 可能提示"未知发布者"，选择"仍要运行"即可。
@@ -35,6 +35,36 @@
 - **DHCP 服务器**：`service dhcp`、`ip dhcp pool <名>`（network / default-router / dns-server /
   lease / range）、`ip dhcp excluded-address`，`show ip dhcp pool` 与 `show ip dhcp binding`
 
+### 思科对标增强（设备仍为神州数码 DCS）
+
+除课程命令外，补充了思科 IOS 上企业网常用的功能，命令语法对齐思科：
+
+**二层**
+- VTP 集中管理 VLAN：`vtp mode server|client|transparent`、`vtp domain`、`vtp version`、`vtp pruning`
+- 生成树保护：PortFast / BPDU Guard / BPDU Filter / Root Guard、生成树计时器
+- 聚合负载分担：`port-group N load-balance <算法>`、`min-links`
+- 端口属性：`speed` / `duplex` / `negotiation` / `description` / `storm-control` / `udld` / `dot1x`
+- 新增 `show vtp`、`show spanning-tree detail`、`show etherchannel summary`、`show interfaces status/trunk`
+
+**三层**
+- 辅助地址 `ip address <IP> <掩码> secondary`、DHCP 中继 `ip helper-address`、代理 ARP `proxy arp`
+- RIP 增强：计时器 / poison-reverse / split-horizon / default-information originate
+- OSPF 增强：auto-cost reference-bandwidth / log-adjacency-changes / default-information originate
+- 新增 `show ip interface` / `ip helper` / `ip proxy-arp` / `ip rip` / `ip ospf`
+
+**NAT / 策略路由 / 环路检测**
+- NAT：`ip nat inside|outside`、`ip nat pool`、`ip nat overload`、`ip nat inside source list <ACL>`，
+  **真实转换**并维护转换表（`show ip nat`）
+- 策略路由：`route-map` → `match` / `set`（`show route-map`）
+- 二层环路检测：`loop-detect enable`，MAC 反复漂移即告警并中断转发（`show loop-detect`）
+
+**设备管理与运维**
+- `show version` / `show device-info`
+- 日志 `logging host|trap`、时钟 `clock timezone`、NTP `ntp server`
+- AAA `aaa new-model`、TACACS+/RADIUS 服务器、SNMPv3 用户
+- 用户特权级 `username <名> privilege <0-15>`、`banner motd`、`config-register`、
+  `service password-recovery`、`history size`
+
 ### 本地运行（无需 exe）
 直接用浏览器打开 `index.html` 即可，无需安装任何依赖。
 
@@ -47,9 +77,13 @@ src/cli-engine.js   DCN 命令解析与执行
 src/labs.js         16 个实验预设
 src/ui.js           界面与交互
 src/icons.js        图标映射（Lucide, ISC License）
-test/               自动化测试（594 项）
+test/               自动化测试（864 项）
 electron/           Electron 打包配置
 ```
+
+### v1.3.0 修复的问题
+- `ip address` 的缩写正则 `add(?:r|ess)?` 对 "address" 不回溯，实际只匹配到 "addr"，
+  导致**路由器物理口上配 IP 一直失败**（课程实验走 vlan 接口路径侥幸可用）
 
 ### v1.2.0 修复的问题
 - **IP 换算精度丢失**：`192.168.10.0` 曾被算成 `192.168.0.0`（整数乘法超过 2^31 后精度丢失），
@@ -77,10 +111,14 @@ node test\advanced-feature-test.js  # ACL/VRRP/DHCP（78 项）
 node test\consistency-test.js  # 多特性组合（43 项）
 node test\factory-reset-test.js # 出厂重置完整性（22 项）
 node test\ip-math-test.js      # IP 换算与位运算（33 项）
+node test\cisco-parity-1-test.js # 思科对标：二层（83 项）
+node test\cisco-parity-2-test.js # 思科对标：三层（62 项）
+node test\cisco-parity-3-test.js # 思科对标：运维（72 项）
+node test\cisco-parity-4-test.js # 思科对标：NAT/PBR/环路（53 项）
 cd test; npm install; cd ..    # jsdom 依赖（仅页面测试需要）
 node test\answer-test.js       # 端到端（24 项）
 ```
-共 594 项自动化测试，全部通过。
+共 864 项自动化测试，全部通过。
 
 ### 图标许可
 [Lucide](https://lucide.dev) Icons，ISC License。

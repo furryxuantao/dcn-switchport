@@ -19,6 +19,7 @@ function createSession(dev) {
     if (m !== "ospf") s.ospfProc = null;
     if (m !== "acl") s.aclId = null;
     if (m !== "dhcp-pool") s.dhcpPool = null;
+    if (m !== "route-map") s.routeMapName = null;
     return s.mode;
   };
   return s;
@@ -33,6 +34,7 @@ function enterMode(sess, m) {
   if (m !== "ospf") sess.ospfProc = null;
   if (m !== "acl") sess.aclId = null;
   if (m !== "dhcp-pool") sess.dhcpPool = null;
+  if (m !== "route-map") sess.routeMapName = null;
   return m;
 }
 function promptFor(dev, sess) {
@@ -1652,7 +1654,7 @@ function execLine(ctx, rawLine) {
     // 环路保护 / BPDU Guard
     if (ipt("loop-guard") || ipt("bpdu-guard")) {
       var lgOn = !_ifNo && (!_itp[1] || !/^d/i.test(_itp[1]));
-      eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].loopGuard = lgOn; dev.ports[pn].BPDUGuard = lgOn; } });
+      eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].loopGuard = lgOn; dev.ports[pn].bpduGuard = lgOn; dev.ports[pn].pduGuard = lgOn; } });
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // 端口速率限制：swi speed limit 1000 / switchport rate-limit 1000
