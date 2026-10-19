@@ -236,6 +236,7 @@ function doPing(srcDev, ip, silent) {
   return r;
 }
 // 返回 {ok}；违例时直接关断端口并给出原因（供 doPing 先行判定）
+// 检测逻辑统一放在仿真核心 Sim.checkPortSecurityViolation，UI 与 node 测试行为一致
 function checkPortSecurity(pcDev) {
   if (pcDev.type !== "pc") return { ok: true };
   var l = links.find(function (x) { return x.a.dev === pcDev.id || x.b.dev === pcDev.id; });
@@ -243,15 +244,18 @@ function checkPortSecurity(pcDev) {
   var swId = l.a.dev === pcDev.id ? l.b.dev : l.a.dev;
   var swPort = l.a.dev === pcDev.id ? l.b.port : l.a.port;
   var sw = devById(swId); if (!sw || !sw.ports[swPort]) return { ok: true };
-  var ps = sw.ports[swPort].portSecurity;
-  if (ps.enabled && sw.cpuControl !== false) {
-    var mac = pcDev.pcMac;
-    if ((ps.staticMacs.length && ps.staticMacs.indexOf(mac) < 0) || (!ps.staticMacs.length && ps.max <= 0)) {
-      sw.ports[swPort].violated = true; sw.ports[swPort].shutdown = true; sw.ports[swPort].violatedAt = Date.now();
-      print('<span class="e">% Port ' + escapeHtml(swPort) + ' security violation, shutdown.</span>');
+  var v = Sim.checkPortSecurityViolation(sw, swPort, pcDev.pcMac);
+  if (v && v.violated) {
+    if (!sw.ports[swPort].violated) {
+      Sim.applyPortSecurityAction(sw, swPort, v);
+      print('<span class="e">% Port ' + escapeHtml(swPort) + ' security violation, ' +
+        escapeHtml(v.action || "shutdown") + '.</span>');
       render();
+    }
+    if ((v.action || "shutdown") === "shutdown") {
       return { ok: false, reason: "端口安全违例（" + sw.hostname + ":" + swPort + " 已 shutdown）" };
     }
+    return { ok: false, reason: "端口安全违例（" + sw.hostname + ":" + swPort + " " + (v.action || "") + "，报文被丢弃）" };
   }
   return { ok: true };
 }

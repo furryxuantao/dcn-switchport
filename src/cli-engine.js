@@ -1435,12 +1435,27 @@ function execLine(ctx, rawLine) {
       if (mmac) {
         var nm = S().normMac(mmac[2]);
         if (!nm) return { output: "% MAC格式如 XX-XX-XX-XX-XX-XX", prompt: promptFor(dev, sess) };
-        eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].portSecurity.enabled = true; dev.ports[pn].portSecurity.staticMacs.push(nm); } });
+        eachPort(function (pn) {
+          if (!dev.ports[pn]) return;
+          var p = dev.ports[pn];
+          p.portSecurity.enabled = true;
+          if (p.portSecurity.staticMacs.indexOf(nm) < 0) p.portSecurity.staticMacs.push(nm);
+          // 静态绑定的 MAC 同时写入 MAC 表并标记为 static，避免被动态学习覆盖
+          dev.macTable[nm] = { port: pn, vlan: p.accessVlan || 1, age: Date.now(), static: true };
+        });
         return { output: "", prompt: promptFor(dev, sess) };
       }
-      var mv = tail2.match(/^violation\s+shutdown(\s+recovery\s+(\d+))?$/i);
-      if (mv) { eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].portSecurity.enabled = true; dev.ports[pn].portSecurity.violation = "shutdown"; if (mv[2]) dev.ports[pn].portSecurity.recovery = parseInt(mv[2], 10); } }); return { output: "", prompt: promptFor(dev, sess) }; }
-      return { output: "% 用法：swi port-sec [maximum N | mac-add XX | violation shutdown [recovery N]]", prompt: promptFor(dev, sess) };
+      var mv = tail2.match(/^violation\s+(shutdown|protect|restrict)(\s+recovery\s+(\d+))?$/i);
+      if (mv) {
+        eachPort(function (pn) {
+          if (!dev.ports[pn]) return;
+          dev.ports[pn].portSecurity.enabled = true;
+          dev.ports[pn].portSecurity.violation = mv[1].toLowerCase();
+          if (mv[3]) dev.ports[pn].portSecurity.recovery = parseInt(mv[3], 10);
+        });
+        return { output: "", prompt: promptFor(dev, sess) };
+      }
+      return { output: "% 用法：swi port-sec [maximum N | mac-add XX | violation shutdown|protect|restrict [recovery N]]", prompt: promptFor(dev, sess) };
     }
     // ===== DCN 企业级特性：接口模式 =====
     var _it = tokensOf(line);

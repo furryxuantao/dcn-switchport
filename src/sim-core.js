@@ -148,7 +148,7 @@ function makePorts(type) {
     return {
       name: name, shutdown: false, stpBlock: false,
       mode: "access", accessVlan: 1, trunkAllowed: null, // null=all
-      portSecurity: { enabled: false, max: 1, staticMacs: [], violation: "shutdown", recovery: 0, violated: false },
+      portSecurity: { enabled: false, max: 1, staticMacs: [], learnedMacs: {}, violation: "shutdown", recovery: 0, violated: false },
       aggGroup: 0, mirrorRole: null,
       trust: false,            // DHCP Snooping 信任端口
       isolateGroup: 0,         // 端口隔离组号，0=不隔离
@@ -899,13 +899,18 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     : (srcDev.mac || null);
   var srcIp = (srcDev.type === "pc" && srcDev.pcIp) ? srcDev.pcIp
     : (deviceIpList(srcDev)[0] || null);
+  // 目的 MAC：模拟主机的 ARP 解析（仿真中 IP→MAC 是已知的）
+  // 用于「已知单播优先」转发；未知时退化为泛洪
+  var dstMac = null;
+  var _dstDev = findDeviceByIp(allDevices, dstIp);
+  if (_dstDev) dstMac = (_dstDev.type === "pc" && _dstDev.pcMac) ? _dstDev.pcMac : (_dstDev.mac || null);
   function push(devId, vlan, path, fromPort) {
     var k = devId + "|" + (vlan === null || vlan === undefined ? "-" : vlan);
     if (isoDevs[devId]) k += "|" + (fromPort || "-");
     if (visited[k]) return false;
     visited[k] = true;
     queue.push({ devId: devId, vlan: vlan, path: path, fromPort: fromPort || null,
-      srcMac: srcMac, srcIp: srcIp });
+      srcMac: srcMac, srcIp: srcIp, dstMac: dstMac });
     return true;
   }
   // 起点：PC 从所接端口进入 vlan；交换机/路由 CLI 发起为无标签
@@ -943,6 +948,35 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     if (dev.type === "l2") {
       // 二层：只在同一 vlan 内泛洪，且收发端口都要放行该 vlan、未被 STP 阻断
       var vlan = (cur.vlan === null || cur.vlan === undefined) ? 1 : cur.vlan;
+      // ---- MAC 地址表自学习：交换机从入端口学习源 MAC ----
+      // 这是「以太网交换机工作原理」实验的核心：show mac-address-table
+      if (cur.fromPort && cur.srcMac) {
+        // 端口安全检查在先：违例则不学习、不转发
+        var psV = checkPortSecurityViolation(dev, cur.fromPort, cur.srcMac);
+        if (psV && psV.violated) {
+          if (!dev.ports[cur.fromPort].violated) {
+            applyPortSecurityAction(dev, cur.fromPort, psV);
+            if (psV.action === "shutdown") {
+              return {
+                ok: false, path: [],
+                reason: "端口安全违例：" + dev.hostname + " 的 " + cur.fromPort +
+                  " 检测到非法 MAC（" + psV.reason + "），端口已 shutdown"
+              };
+            }
+          }
+          if (dev.ports[cur.fromPort].protectDrop || dev.ports[cur.fromPort].restrictCount) {
+            continue;   // protect/restrict：丢弃违规报文，端口保持 up
+          }
+        }
+        var learned = learnMac(dev, cur.srcMac, cur.fromPort, vlan);
+        if (learned === null && dev.macTableFull) {
+          return {
+            ok: false, path: [],
+            reason: "MAC 地址表已满（上限 " + dev.macLimit + " 条），" + dev.hostname +
+              " 无法再学习 " + cur.srcMac + "，未知单播将泛洪"
+          };
+        }
+      }
       // ---- BPDU Guard / Filter：接入口误接了交换机时生效 ----
       // 思科语义：开启 BPDU Guard 的端口一旦收到 BPDU 就置为 error-disable。
       // 本仿真不传真实 BPDU 帧，等价判据是「该口连着启用了生成树的交换机」，
@@ -996,6 +1030,12 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
         if (!nb || !nb.dev || !linkOperUp(allDevices, nb.link, stpInfo)) continue;
         if (isStpBlocked(nb.dev, nb.port, stpInfo)) continue;
         var nd = nb.dev;
+        // ---- 已知单播：MAC 表中已有目的 MAC 时只转发到对应端口 ----
+        // 未命中则按未知单播泛洪（真机行为）
+        if (cur.dstMac) {
+          var known = dev.macTable[cur.dstMac];
+          if (known && known.port && known.port !== pn) continue;   // 不是目的口，不转发
+        }
         // BPDU Guard：本口配了 bpduguard 却连着启用了生成树的交换机
         // → 对端会向本口发 BPDU → 本口置为 error-disable 并 shutdown
         var bgPort = dev.ports[pn];
@@ -1023,6 +1063,10 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
       continue;
     }
     // L3 / Router：查路由表决定下一跳
+    // 三层交换机同样会学习 MAC（它也做二层转发）
+    if (dev.type === "l3" && cur.fromPort && cur.srcMac) {
+      learnMac(dev, cur.srcMac, cur.fromPort, (cur.vlan === null || cur.vlan === undefined) ? 1 : cur.vlan);
+    }
     var rt = routeLookup(dev, dstIp, allDevices, links);
     if (!rt) continue; // 无路由
     var egressPort = rt.port, nextHopIp = rt.nextHop;
@@ -1081,6 +1125,24 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
   }
   // 失败原因推断
   var reason = diagnoseFail(allDevices, links, srcDev, dstIp, stpInfo);
+  // MAC 表指向错误端口时的专门提示（真机常见故障：MAC 地址表错误导致不通）
+  if (dstMac) {
+    allDevices.forEach(function (d) {
+      if (d.type !== "l2" && d.type !== "l3") return;
+      var e = d.macTable[dstMac];
+      if (!e || !e.port) return;
+      var nbE = neighborOnLink(allDevices, links, d.id, e.port);
+      if (!nbE || !nbE.dev) return;
+      var isTarget = (nbE.dev.type === "pc" && nbE.dev.pcMac === dstMac) ||
+        (nbE.dev.type !== "pc" && nbE.dev.mac === dstMac);
+      if (!isTarget) {
+        reason = "MAC 地址表错误：" + d.hostname + " 的 MAC 表把 " + dstMac +
+          " 记在 " + e.port + "，但该口连接的是 " + nbE.dev.hostname +
+          "，不是目的主机 " + (findDeviceByIp(allDevices, dstIp) || {}).hostname +
+          "，因此无法送达（请检查 show mac-address-table）";
+      }
+    });
+  }
   return { ok: false, path: [], reason: reason };
 }
 function firstLinkNeighbor(allDevices, links, dev) {
@@ -1107,6 +1169,23 @@ function diagnoseFail(allDevices, links, srcDev, dstIp, stpInfo) {
     if (sv !== null && tv !== null && sv !== "trunk" && tv !== "trunk" && sv !== tv)
       return "VLAN不一致（源vlan" + sv + "，目标vlan" + tv + "）：需同VLAN同网段";
   }
+  // 路由器/L3 源 ping 失败：先看路由表有没有到目标网段的条目
+  if (srcDev.type === "router" || srcDev.type === "l3") {
+    var rtS = routeLookup(srcDev, dstIp, allDevices, links);
+    if (!rtS) {
+      // 没有路由：区分「目标网段未知」与「有路由但下一跳不可达」
+      var hasDefault = (srcDev.staticRoutes || []).some(function (r) { return r.dest === "0.0.0.0"; });
+      return "无路由：" + srcDev.hostname + " 的路由表中没有 " + dstIp + " 所属网段的条目" +
+        (hasDefault ? "（虽有默认路由，但下一跳不可达）" : "（请配置静态路由 / 默认路由 / RIP / OSPF）");
+    }
+    if (rtS.nextHop !== "direct") {
+      var nh = findDeviceByIp(allDevices, rtS.nextHop);
+      if (!nh) {
+        return "下一跳不可达：" + srcDev.hostname + " 学到的 " + rtS.dest +
+          " 路由下一跳 " + rtS.nextHop + " 不在网络中";
+      }
+    }
+  }
   // 端口隔离：源与目的所接的交换机端口都开了隔离 → 互相隔离
   var sn = srcDev.type === "pc" ? firstLinkNeighbor(allDevices, links, srcDev) : null;
   var tn = target.type === "pc" ? firstLinkNeighbor(allDevices, links, target) : null;
@@ -1122,6 +1201,26 @@ function diagnoseFail(allDevices, links, srcDev, dstIp, stpInfo) {
   }
   // 检查端口shutdown / 安全违例 / STP阻断
   var badPorts = [];
+  // 串口未配 DCE 时钟导致链路 down（课程实验 12 的经典坑）
+  var clockIssues = [];
+  links.forEach(function (l) {
+    if (!(String(l.a.port).charAt(0) === "s" || String(l.b.port).charAt(0) === "s")) return;
+    [[devById(allDevices, l.a.dev), l.a.port], [devById(allDevices, l.b.dev), l.b.port]].forEach(function (pr) {
+      var d = pr[0], pn = pr[1];
+      if (!d || d.type !== "router" || !pn) return;
+      if (String(pn).charAt(0) !== "s") return;
+      var cfg = d.ifIp[pn];
+      if (!cfg || !cfg.clock) {
+        clockIssues.push(d.hostname + ":" + pn);
+      }
+    });
+  });
+  if (clockIssues.length) {
+    var uniqClock = [];
+    clockIssues.forEach(function (x) { if (uniqClock.indexOf(x) < 0) uniqClock.push(x); });
+    return "串口时钟未配置：" + uniqClock.join("、") +
+      " —— 串口链路需要其中一端提供 DCE 时钟（接口下执行 physical-layer speed 64000），否则链路 down";
+  }
   allDevices.forEach(function (d) {
     Object.keys(d.ports).forEach(function (pn) {
       var p = d.ports[pn];
@@ -1346,7 +1445,16 @@ function showPortSecurity(dev, portFilter) {
     if (portFilter && pn !== portFilter) return;
     if (!p.portSecurity.enabled && !portFilter) return;
     if (portFilter || p.portSecurity.enabled) {
-      lines.push(("e" + pn.substr(1)).padEnd(13, " ") + String(p.portSecurity.max).padEnd(15, " ") + String(p.portSecurity.staticMacs.length).padEnd(13, " ") + (p.violated ? "Shutdown(violated)" : "Shutdown"));
+      // 当前地址数：静态绑定的 MAC + 动态学习到的 MAC
+      var statics = p.portSecurity.staticMacs || [];
+      var learned = Object.keys(p.portSecurity.learnedMacs || {}).length;
+      var cur = statics.length ? statics.length : learned;
+      var action = p.portSecurity.violation || "shutdown";
+      var state = p.violated
+        ? (action === "shutdown" ? "Shutdown(violated)" : action + "(violated)")
+        : (action === "shutdown" ? "Shutdown" : action);
+      lines.push(("e" + pn.substr(1)).padEnd(13, " ") + String(p.portSecurity.max).padEnd(15, " ") +
+        String(cur).padEnd(13, " ") + state);
     }
   });
   if (lines.length === 1) return "% No port-security enabled";
@@ -1354,6 +1462,63 @@ function showPortSecurity(dev, portFilter) {
 }
 // ================= 二层安全与控制平面 =================
 function portLabel(pn) { return pn.indexOf("e") === 0 ? "Ethernet" + pn.substr(1) : pn; }
+
+// ---- 端口安全违例检测（放在仿真核心，UI 与 node 测试都能用）----
+// 真机语义：
+//   · 配了静态 MAC：只有列表内的 MAC 才允许通过，其它一律违例
+//   · 没配静态 MAC：最多允许 max 个不同的 MAC，超出即违例
+// 返回 {violated, reason, action}
+function checkPortSecurityViolation(dev, port, mac) {
+  var p = dev.ports[port];
+  if (!p || !p.portSecurity || !p.portSecurity.enabled) return null;
+  var ps = p.portSecurity;
+  if (ps.violated) return { violated: true, reason: "端口已因违例被关断", action: ps.violation };
+  if (!mac) return null;
+  // 静态 MAC 白名单
+  if (ps.staticMacs && ps.staticMacs.length) {
+    if (ps.staticMacs.indexOf(mac) >= 0) return null;
+    return {
+      violated: true, action: ps.violation || "shutdown",
+      reason: "MAC 地址不在静态绑定列表内（允许 " + ps.staticMacs.join(", ") + "）"
+    };
+  }
+  // 动态学习数量上限
+  var max = ps.max === undefined ? 1 : ps.max;
+  if (max <= 0) return null;
+  var learned = ps.learnedMacs || (ps.learnedMacs = {});
+  if (!learned[mac]) {
+    var cnt = Object.keys(learned).length;
+    if (cnt >= max) {
+      return {
+        violated: true, action: ps.violation || "shutdown",
+        reason: "该端口已学习 " + cnt + " 个 MAC，达到上限 " + max + "，新 MAC " + mac + " 造成违例"
+      };
+    }
+    learned[mac] = true;
+  }
+  return null;
+}
+// 执行违例动作：shutdown / protect / restrict
+function applyPortSecurityAction(dev, port, v) {
+  var p = dev.ports[port];
+  if (!p) return;
+  var action = v.action || "shutdown";
+  if (action === "shutdown") {
+    p.violated = true;
+    p.shutdown = true;
+    p.violatedAt = Date.now();
+    p.errDisable = true;
+    p.errDisableReason = "Port-security violation";
+  } else if (action === "protect") {
+    // protect：丢弃违规报文但保持端口 up
+    p.violated = true;
+    p.protectDrop = true;
+  } else if (action === "restrict") {
+    // restrict：丢弃违规报文并计数，端口保持 up
+    p.violated = true;
+    p.restrictCount = (p.restrictCount || 0) + 1;
+  }
+}
 
 // --- DHCP Snooping ---
 function showDhcpSnooping(dev) {
@@ -2544,6 +2709,9 @@ var api = {
   // ---- ACL ----
   aclDecide: aclDecide, aclRuleMatch: aclRuleMatch, aclIpMatch: aclIpMatch,
   showAcl: showAcl, showAclBrief: showAclBrief,
+  // ---- 端口安全 ----
+  checkPortSecurityViolation: checkPortSecurityViolation,
+  applyPortSecurityAction: applyPortSecurityAction,
   // ---- VRRP ----
   vrrpElect: vrrpElect, showVrrp: showVrrp, vrrpVirtualIp: vrrpVirtualIp,
   // ---- DHCP 服务器 ----
