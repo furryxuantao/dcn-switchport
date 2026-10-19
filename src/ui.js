@@ -1785,6 +1785,10 @@ function init() {
     print(" mac-address static <MAC> interface <端口>   静态MAC绑定\n mac-address aging-time <秒> / mac-address maximum <条>\n sh mac-address s / sh mac a");
     print(" lldp enable / snmp-server community <串> ro / snmp-agent sys-contact <串>\n sh lldp / sh snmp");
     print(" mac-address-learning cpu-control    CPU学习MAC（防MAC泛洪攻击）");
+    print("【访问控制 / 网关冗余 / DHCP】", "ok");
+    print(" ip access-list extended 100        创建ACL并进入配置模式\n seq 10 deny ip 192.168.1.0 0.0.0.255 10.0.0.0 0.0.0.255\n seq 20 permit ip any any\n 接口下 ip access-group 100 in    把ACL绑到端口（命中deny真实阻断流量）\n sh access-lists                    查看规则与应用位置");
+    print(" 接口下 vrrp 1 ip 192.168.1.254     配置VRRP虚拟网关\n vrrp 1 priority 120                 优先级大者当Master\n sh vrrp                             查看组状态与当前Master");
+    print(" service dhcp                      开启DHCP服务器\n ip dhcp pool office                创建地址池\n network 192.168.10.0 255.255.255.0 / default-router 192.168.10.254 / lease 7200\n sh ip dhcp pool / sh ip dhcp binding");
   };
   var be = $("btnEmptyLab"); if (be) be.onclick = function () { sel.value = "lab4"; loadLab("lab4"); };
   var bh = $("btnEmptyHelp"); if (bh) bh.onclick = function () { $("btnHelp").click(); };

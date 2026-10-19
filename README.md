@@ -50,6 +50,19 @@
 **端口隔离是真实生效的**：把两台 PC 接入都开了 `switchport isolate group` 的端口后，
 `ping` 会返回「端口隔离阻断」，`diagnoseFail` 会指名是哪两个口。
 
+## 三层与网关类功能
+
+| 功能 | 配置命令 | 查看命令 |
+|------|----------|----------|
+| ACL 访问控制列表 | `ip access-list extended <编号>` → `seq <n> permit\|deny <协议> <源> <目的> [eq <端口>] [log]`、接口下 `ip access-group <编号> in` | `show access-lists` |
+| VRRP 网关冗余 | 接口下 `vrrp <组号> ip <虚IP>`、`vrrp <组号> priority <1-254>` | `show vrrp` |
+| DHCP 服务器 | `service dhcp`、`ip dhcp pool <名>` → `network`/`default-router`/`dns-server`/`lease`/`range`、`ip dhcp excluded-address` | `show ip dhcp pool`、`show ip dhcp binding` |
+
+**ACL 会真实阻断流量**：把 `deny` 规则应用到接口后，对应源/目的网段的 `ping` 会返回
+「ACL 阻断：报文 x → y 被 ... 拒绝（deny）」，不在规则内的流量放行。
+
+**ACL 地址写法为反掩码**（与真机一致）：`192.168.1.0 0.0.0.255` 表示整个 /24。
+
 ## 目录
 - `index.html` 入口（拓扑画布 + CLI 终端 + 测试清单 + 抓包）
 - `src/sim-core.js` 转发/路由/MAC/STP/聚合/镜像/安全仿真（无 DOM，可 node 单测）
@@ -81,6 +94,9 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 node src\run-tests.js       # CLI 引擎 23 项
 node test\cmd-audit.js      # 命令审计 70 项
 node test\enterprise-test.js # 企业级新功能 121 项
+node test\runtime-behavior-test.js # 运行时行为（安全特性是否真生效）42 项
+node test\edge-case-test.js # 边界与异常输入 56 项
+node test\advanced-feature-test.js # ACL/VRRP/DHCP 78 项
 node test\latency-storm-test.js
 ```
 
