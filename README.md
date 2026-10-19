@@ -63,6 +63,63 @@
 
 **ACL 地址写法为反掩码**（与真机一致）：`192.168.1.0 0.0.0.255` 表示整个 /24。
 
+## 思科对标增强（设备仍为神州数码 DCS）
+
+在课程命令之外，额外实现了思科 IOS 上企业网常用的功能，命令语法对齐思科：
+
+### 二层
+
+| 功能 | 配置命令 | 查看命令 |
+|------|----------|----------|
+| VTP VLAN 集中管理 | `vtp mode server\|client\|transparent`、`vtp domain <名>`、`vtp version <1\|2\|3>`、`vtp pruning` | `show vtp`、`show vtp status` |
+| 边缘口 PortFast | 接口下 `spanning-tree portfast`、全局 `spanning-tree portfast default` | `show spanning-tree detail` |
+| BPDU Guard | 接口下 `spanning-tree bpduguard` | 同上 |
+| BPDU Filter | 接口下 `spanning-tree bpdufilter` | 同上 |
+| 根守卫 | 接口下 `spanning-tree guard root`、全局 `spanning-tree guard root` | 同上 |
+| 生成树计时器 | `spanning-tree forward-time\|hello-time\|max-age <秒>` | 同上 |
+| 聚合负载分担 | `port-group <n> load-balance src-dst-mac` | `show etherchannel load-balance` |
+| 聚合最小链路 | `port-group <n> min-links <n>` | `show etherchannel summary` |
+| 端口速率/双工 | 接口下 `speed <10\|100\|1000>`、`duplex <auto\|full\|half>`、`negotiation auto` | `show interfaces status` |
+| 端口描述 | 接口下 `description <文本>` | 同上 |
+| 风暴抑制 | 接口下 `storm-control broadcast level <n>` | 同上 |
+| UDLD | 接口下 `udld enable` | 同上 |
+| 802.1X | 接口下 `dot1x port-control auto` | 同上 |
+
+**VTP 真实生效**：server 上 `vlan N` + `name X` 会发布到 VTP 库，同域的 client
+调用 `vtpSync` 时自动学到这些 VLAN；`transparent` 模式不学习，不同域不同步。
+
+**BPDU Guard 真实生效**：接入口若连着启用了生成树的交换机，会被判为收到 BPDU，
+端口自动置为 error-disable 并 shutdown，`ping` 返回「BPDU Guard：…已自动 shutdown」。
+
+### 三层
+
+| 功能 | 配置命令 | 查看命令 |
+|------|----------|----------|
+| 辅助地址 | 接口下 `ip address <IP> <掩码> secondary` | `show ip interface` |
+| DHCP 中继 | 接口下 `ip helper-address <服务器IP>` | `show ip helper` |
+| 代理 ARP | 接口下 `proxy arp`、全局 `ip proxy-arp` | `show ip proxy-arp` |
+| RIP 增强 | `router rip` 下 `timers update\|invalid\|hold\|flush <秒>`、`no poison-reverse`、`no split-horizon`、`default-information originate` | `show ip rip` |
+| OSPF 增强 | `router ospf` 下 `auto-cost reference-bandwidth <Mbit>`、`log-adjacency-changes`、`default-information originate [always]`、`area <id>` | `show ip ospf` |
+| 静态路由 | — | `show ip route static` |
+
+**辅助地址真实生效**：会生成直连路由、可被 ping 通，并出现在 `show ip interface` 中。
+
+### 设备管理与运维
+
+| 功能 | 配置命令 | 查看命令 |
+|------|----------|----------|
+| 系统信息 | — | `show version`、`show device-info` |
+| 日志 syslog | `logging host <IP>`、`logging trap <级别>`、`no logging` | `show logging` |
+| 时钟与 NTP | `clock timezone <±时区>`、`ntp server <IP>` | `show clock` |
+| AAA | `aaa new-model`、`aaa authentication login <local\|tacacs\|radius>` | `show aaa` |
+| TACACS+/RADIUS | `tacacs-server host <IP>`、`radius-server host <IP>` | `show aaa` |
+| SNMPv3 | `snmp-server user <名> <组> auth sha <密钥>` | — |
+| 用户特权级 | `username <名> privilege <0-15> <0\|7> <口令>` | `show users` |
+| 登录横幅 | `banner motd <文本>` | — |
+| 配置寄存器 | `config-register <值>` | `show version` |
+| 密码恢复 | `service password-recovery` | — |
+| 命令历史 | `history size <条数>` | — |
+
 ## 目录
 - `index.html` 入口（拓扑画布 + CLI 终端 + 测试清单 + 抓包）
 - `src/sim-core.js` 转发/路由/MAC/STP/聚合/镜像/安全仿真（无 DOM，可 node 单测）
@@ -100,10 +157,13 @@ node test\advanced-feature-test.js # ACL/VRRP/DHCP 78 项
 node test\consistency-test.js # 多特性组合 43 项
 node test\factory-reset-test.js # 出厂重置完整性 22 项
 node test\ip-math-test.js   # IP 换算与位运算 33 项
+node test\cisco-parity-1-test.js # 思科对标：二层增强 83 项
+node test\cisco-parity-2-test.js # 思科对标：三层增强 62 项
+node test\cisco-parity-3-test.js # 思科对标：运维管理 72 项
 node test\latency-storm-test.js
 ```
 
-共 594 项自动化测试，全部通过。
+共 811 项自动化测试，全部通过。
 
 跑无头页面测试（载入实验、点击交互、标准答案端到端）需要 jsdom：
 

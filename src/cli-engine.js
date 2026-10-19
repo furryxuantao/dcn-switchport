@@ -94,6 +94,25 @@ var HELP = {
     ["show vrrp", "查看VRRP组状态与Master"],
     ["show ip dhcp pool", "查看DHCP地址池"],
     ["show ip dhcp binding", "查看DHCP地址绑定"],
+    // ---- 思科对标 ----
+    ["show vtp / show vtp status", "查看VTP状态"],
+    ["show spanning-tree detail", "查看生成树详细（角色/保护口）"],
+    ["show etherchannel summary", "查看链路聚合摘要"],
+    ["show etherchannel load-balance", "查看聚合负载分担算法"],
+    ["show interfaces status", "查看接口状态一览"],
+    ["show interfaces trunk", "查看trunk接口与允许VLAN"],
+    ["show ip interface", "查看接口IP与辅助地址"],
+    ["show ip helper", "查看DHCP中继配置"],
+    ["show ip proxy-arp", "查看代理ARP"],
+    ["show ip rip", "查看RIP详细配置"],
+    ["show ip ospf", "查看OSPF详细配置"],
+    ["show ip route static", "查看静态路由"],
+    ["show version", "查看系统版本与运行时间"],
+    ["show device-info", "查看设备信息一览"],
+    ["show logging", "查看日志配置"],
+    ["show clock", "查看时钟与NTP"],
+    ["show aaa", "查看AAA配置"],
+    ["show users", "查看本地用户与特权级"],
     ["set default", "恢复到出厂设置"],
     ["write", "保存当前配置信息"],
     ["reload / reboot", "重新启动"],
@@ -122,6 +141,34 @@ var HELP = {
     ["snmp-agent sys-contact <串>", "设置SNMP联系人"],
     ["snmp-agent sys-location <串>", "设置SNMP位置"],
     ["debug mirror", "调试端口镜像（课程实验用）"],
+    // ---- 思科对标增强 ----
+    ["vtp mode server|client|transparent", "VTP模式（VLAN统一管理）"],
+    ["vtp domain <名>", "设置VTP域"],
+    ["vtp version <1|2|3>", "VTP版本"],
+    ["vtp pruning", "开启VTP修剪"],
+    ["spanning-tree guard root", "全局根守卫"],
+    ["spanning-tree portfast default", "全局边缘口（接入口秒进FWD）"],
+    ["spanning-tree bpduguard default", "全局BPDU Guard"],
+    ["spanning-tree forward-time|hello-time|max-age <秒>", "生成树计时器"],
+    // ---- 三层增强 ----
+    ["ip helper-address <DHCP服务器IP>", "DHCP中继（接口下配，转发给远端DHCP服务器）"],
+    ["ip proxy-arp", "全局开启代理ARP"],
+    ["ip address <IP> <掩码> secondary", "配置辅助地址（接口下）"],
+    ["auto-cost reference-bandwidth <Mbit>", "OSPF参考带宽"],
+    // ---- 设备管理与运维 ----
+    ["logging host <IP>", "指定日志服务器（syslog）"],
+    ["logging trap <级别>", "设置日志级别"],
+    ["clock timezone <±时区>", "设置时区"],
+    ["ntp server <IP>", "配置NTP时间同步服务器"],
+    ["aaa new-model", "启用AAA新模型"],
+    ["tacacs-server host <IP> [key <密钥>]", "配置TACACS+服务器"],
+    ["radius-server host <IP> [key <密钥>]", "配置RADIUS服务器"],
+    ["snmp-server user <名> <组> auth sha <密钥>", "配置SNMPv3用户"],
+    ["banner motd <文本>", "设置登录提示语"],
+    ["username <名> privilege <0-15> <口令>", "创建带特权级的用户"],
+    ["config-register <值>", "设置配置寄存器"],
+    ["service password-recovery", "启用密码恢复"],
+    ["history size <条数>", "设置命令历史条数"],
     // ---- ACL / VRRP / DHCP 服务器 ----
     ["ip access-list <standard|extended> <编号>", "创建ACL并进入配置模式"],
     ["ip access-list extended <编号> → permit/deny", "ACL规则：seq <n> permit ip <源> <目的> [eq 端口] [log]"],
@@ -276,6 +323,14 @@ function candidatesFor(mode) {
     add("show mac-address static"); add("show mac aging"); add("show lldp"); add("show snmp");
     add("show access-lists"); add("show vrrp");
     add("show ip dhcp pool"); add("show ip dhcp binding");
+    add("show ip interface"); add("show ip helper"); add("show ip proxy-arp");
+    add("show ip rip"); add("show ip ospf"); add("show ip route static");
+    add("show version"); add("show device-info"); add("show logging");
+    add("show clock"); add("show aaa"); add("show users");
+    add("show vtp"); add("show vtp status");
+    add("show spanning-tree detail"); add("show spanning-tree root");
+    add("show etherchannel summary"); add("show etherchannel load-balance");
+    add("show interfaces status"); add("show interfaces trunk");
     add("reload"); add("reboot"); add("delete"); add("language chinese"); add("language english");
     add("ping <ip>"); add("tracert <ip>"); add("telnet <ip>");
     return list;
@@ -294,6 +349,23 @@ function candidatesFor(mode) {
     add("lldp enable"); add("no lldp"); add("snmp-server enable");
     add("snmp-server community <str> ro"); add("snmp-agent sys-contact <str>"); add("snmp-agent sys-location <str>");
     add("debug mirror");
+    add("vtp mode <server|client|transparent>"); add("vtp domain <name>");
+    add("vtp version <1|2|3>"); add("vtp pruning"); add("no vtp pruning");
+    add("spanning-tree guard root"); add("no spanning-tree guard root");
+    add("spanning-tree portfast default"); add("spanning-tree bpduguard default");
+    add("spanning-tree forward-time <sec>"); add("spanning-tree hello-time <sec>");
+    add("spanning-tree max-age <sec>");
+    add("ip helper-address <ip>"); add("no ip helper-address");
+    add("ip proxy-arp"); add("no ip proxy-arp");
+    add("auto-cost reference-bandwidth <mbit>"); add("log-adjacency-changes");
+    add("logging host <ip>"); add("logging trap <level>"); add("no logging");
+    add("clock timezone <±hh>"); add("ntp server <ip>"); add("no ntp");
+    add("aaa new-model"); add("aaa authentication login <local|tacacs|radius>");
+    add("tacacs-server host <ip>"); add("radius-server host <ip>");
+    add("snmp-server user <name> <group>"); add("banner motd <text>");
+    add("username <name> privilege <0-15> <0|7> <pass>");
+    add("config-register <val>"); add("service password-recovery");
+    add("service timestamps"); add("history size <n>");
     add("ip access-list <standard|extended> <num>");
     add("ip access-list extended <num>"); add("no ip access-list <num>");
     add("service dhcp"); add("no service dhcp");
@@ -320,12 +392,19 @@ function candidatesFor(mode) {
     add("ip access-group <num> in"); add("ip access-group <num> out"); add("no ip access-group");
     add("vrrp <id> ip <vip>"); add("vrrp <id> priority <1-254>");
     add("vrrp <id> timers advertise <sec> hold <sec>");
+    add("spanning-tree portfast"); add("no spanning-tree portfast");
+    add("spanning-tree bpduguard"); add("no spanning-tree bpduguard");
+    add("spanning-tree bpdufilter"); add("spanning-tree guard root");
+    add("spanning-tree edge"); add("description <text>");
+    add("speed <10|100|1000>"); add("duplex <auto|full|half>"); add("negotiation auto");
+    add("storm-control broadcast level <n>"); add("udld enable"); add("dot1x port-control auto"); add("proxy arp"); add("ip helper-address <ip>");
     add("switchport priority <0-7>"); add("ip dhcp snooping trust"); add("no ip dhcp snooping trust");
     add("loop-guard enable"); add("no loop-guard"); add("switchport speed limit <kbps>");
     add("shutdown"); add("no shutdown"); add("no shutdown"); add("ip address <a> <m>");
     add("physical-layer speed 64000"); add("ip rip 1 enable");
     add("passive-interface <port>"); add("authentication securityip <ip>");
     add("port-group 1 mode on"); add("port-group 1 mode active"); add("port-group 1 mode passive");
+    add("port-group <n> load-balance <算法>"); add("port-group <n> min-links <n>");
     add("telnet-server max-connection <n>"); add("exit");
     return list;
   }
@@ -530,7 +609,17 @@ function execLine(ctx, rawLine) {
       "dhcp snooping", "igmp snooping", "arp inspection", "port-isolate",
       "qos priority", "loop-guard", "mac-address static", "mac aging", "lldp", "snmp",
       // ---- ACL / VRRP / DHCP 服务器 ----
-      "access-lists", "acl", "vrrp", "ip dhcp pool", "ip dhcp binding"];
+      "access-lists", "acl", "vrrp", "ip dhcp pool", "ip dhcp binding",
+      // ---- 思科对标增强 ----
+      "vtp", "vtp status", "spanning-tree detail", "spanning-tree interface",
+      "spanning-tree root", "spanning-tree portfast", "spanning-tree bpduguard",
+      "spanning-tree bpdufilter", "spanning-tree guard root", "spanning-tree vtp",
+      "etherchannel summary", "etherchannel load-balance", "port-group summary",
+      "interfaces status", "interfaces trunk", "ip eigrp",
+      // ---- 三层增强 ----
+      "ip interface", "ip route static", "ip helper", "ip proxy-arp", "ip rip", "ip ospf",
+      // ---- 设备管理与运维 ----
+      "version", "device-info", "logging", "clock", "aaa", "users", "system-info"];
     var restT = tokensOf(rest);
     var r0 = restT[0] || "";
     // show running-config（sh run / sh ru / sh running-config）
@@ -568,6 +657,53 @@ function execLine(ctx, rawLine) {
     if (key === "ip route") return { output: Sim.showIpRoute(dev, ctx.devices, ctx.links), prompt: promptFor(dev, sess) };
     if (key === "spanning-tree") return { output: Sim.showSpanningTree(dev, ctx.stpInfo()), prompt: promptFor(dev, sess) };
     if (key === "port-group brief") return { output: Sim.showPortGroup(dev), prompt: promptFor(dev, sess) };
+    // ---- 思科对标：show 子命令 ----
+    if (key === "vtp") return { output: Sim.showVtp(dev, ctx.devices), prompt: promptFor(dev, sess) };
+    if (key === "vtp status") return { output: Sim.showVtpStatus(dev, ctx.devices), prompt: promptFor(dev, sess) };
+    if (key === "spanning-tree detail") return { output: Sim.showStpDetail(dev, ctx.stpInfo()), prompt: promptFor(dev, sess) };
+    if (key === "spanning-tree interface") return { output: Sim.showStpDetail(dev, ctx.stpInfo()), prompt: promptFor(dev, sess) };
+    if (key === "spanning-tree root") return { output: Sim.showStpDetail(dev, ctx.stpInfo()), prompt: promptFor(dev, sess) };
+    if (key === "spanning-tree portfast" || key === "spanning-tree bpduguard" ||
+      key === "spanning-tree bpdufilter" || key === "spanning-tree guard root" ||
+      key === "spanning-tree vtp") {
+      return { output: Sim.showStpDetail(dev, ctx.stpInfo()), prompt: promptFor(dev, sess) };
+    }
+    if (key === "etherchannel summary" || key === "port-group summary") {
+      return { output: Sim.showPortGroup(dev), prompt: promptFor(dev, sess) };
+    }
+    if (key === "etherchannel load-balance") {
+      return { output: Sim.showLoadBalance(dev), prompt: promptFor(dev, sess) };
+    }
+    if (key === "interfaces status") {
+      return { output: Sim.showInterfacesStatus(dev), prompt: promptFor(dev, sess) };
+    }
+    if (key === "interfaces trunk") {
+      return { output: Sim.showInterfacesTrunk(dev), prompt: promptFor(dev, sess) };
+    }
+    if (key === "ip eigrp") {
+      return { output: "% 未配置 EIGRP（本模拟器支持 RIP / OSPF / 静态路由）", prompt: promptFor(dev, sess) };
+    }
+    // ---- 三层增强 ----
+    if (key === "ip interface") return { output: Sim.showIpInterfaceFull(dev, ctx.devices), prompt: promptFor(dev, sess) };
+    if (key === "ip helper") return { output: Sim.showIpHelper(dev), prompt: promptFor(dev, sess) };
+    if (key === "ip proxy-arp") return { output: Sim.showProxyArp(dev), prompt: promptFor(dev, sess) };
+    if (key === "ip rip") return { output: Sim.showRip(dev), prompt: promptFor(dev, sess) };
+    if (key === "ip ospf") return { output: Sim.showOspf(dev), prompt: promptFor(dev, sess) };
+    if (key === "ip route static") {
+      const st = (dev.staticRoutes || []).map(r =>
+        "      " + r.dest + " " + r.mask + " is directly connected, " + r.nextHop +
+        (r.dist && r.dist !== 1 ? ", " + r.dist : ""));
+      return { output: st.length ? st.join("\n") : "% 无静态路由", prompt: promptFor(dev, sess) };
+    }
+    // ---- 设备管理与运维 ----
+    if (key === "version") return { output: Sim.showVersion(dev), prompt: promptFor(dev, sess) };
+    if (key === "device-info" || key === "system-info") {
+      return { output: Sim.showDeviceInfo(dev), prompt: promptFor(dev, sess) };
+    }
+    if (key === "logging") return { output: Sim.showLogging(dev), prompt: promptFor(dev, sess) };
+    if (key === "clock") return { output: Sim.showClock(dev), prompt: promptFor(dev, sess) };
+    if (key === "aaa") return { output: Sim.showAaa(dev), prompt: promptFor(dev, sess) };
+    if (key === "users") return { output: Sim.showUsers(dev), prompt: promptFor(dev, sess) };
     if (key === "monitor") return { output: Sim.showMonitor(dev), prompt: promptFor(dev, sess) };
     if (key === "port-security") return { output: Sim.showPortSecurity(dev, null), prompt: promptFor(dev, sess) };
     // ---- DCN 企业级特性 show ----
@@ -779,6 +915,246 @@ function execLine(ctx, rawLine) {
       });
       return { output: "Monitor Debug:\n" + dbg.join("\n") + "\n  （调试输出已开启，抓包报文将复制到目的口）", prompt: promptFor(dev, sess) };
     }
+    // ===== 三层增强：全局形式 =====
+    // ip proxy-arp（全局开启代理ARP）
+    if (pt("ip proxy-arp")) {
+      if (!dev.proxyArp) dev.proxyArp = { enabled: false, perIf: {} };
+      dev.proxyArp.enabled = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ip helper-address（全局形式：登记服务器，接口级配置才生效中继）
+    if (pt("ip helper-address")) {
+      var gHelper = _pt[2];
+      if (!gHelper || S().ipToInt(gHelper) === null) {
+        return { output: "% 用法：ip helper-address <DHCP服务器IP>", prompt: promptFor(dev, sess) };
+      }
+      if (!dev.ipHelper) dev.ipHelper = { enabled: false, servers: [], perIf: {} };
+      dev.ipHelper.enabled = true;
+      if (dev.ipHelper.servers.indexOf(gHelper) < 0) dev.ipHelper.servers.push(gHelper);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ===== 设备管理与运维：全局配置 =====
+    // logging host <ip> / logging trap <level> / no logging console
+    if (pt("logging host")) {
+      var logIp = _pt[2];
+      if (!logIp || S().ipToInt(logIp) === null) {
+        return { output: "% 用法：logging host <日志服务器IP>", prompt: promptFor(dev, sess) };
+      }
+      dev.logging.enabled = true;
+      if (dev.logging.servers.indexOf(logIp) < 0) dev.logging.servers.push(logIp);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("logging trap") || pt("logging buffered")) {
+      var lvl = _pt[2] || _pt[3];
+      var lvls = ["emergencies", "alerts", "critical", "errors", "warnings", "notifications", "informational", "debugging"];
+      if (lvl && lvls.indexOf(String(lvl).toLowerCase()) < 0) {
+        return { output: "% 日志级别：" + lvls.join(" / "), prompt: promptFor(dev, sess) };
+      }
+      if (lvl) dev.logging.consoleLevel = String(lvl).toLowerCase();
+      dev.logging.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("logging timestamps")) {
+      dev.logging.timestamps = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (_no() && pt("logging")) {
+      dev.logging.enabled = false; dev.logging.servers = [];
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 时钟：clock timezone <区> / clock set hh:mm:ss
+    if (pt("clock timezone")) {
+      var tz = parseInt(_pt[2], 10);
+      if (isNaN(tz) || tz < -12 || tz > 14) return { output: "% 时区范围 -12 ~ +14", prompt: promptFor(dev, sess) };
+      dev.clock.timezone = tz;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("clock set")) {
+      return { output: "% 时钟已设置（仿真中按系统时间显示）", prompt: promptFor(dev, sess) };
+    }
+    // NTP：ntp server <ip> / ntp source
+    if (pt("ntp server")) {
+      var ntpIp = _pt[2];
+      if (!ntpIp || S().ipToInt(ntpIp) === null) {
+        return { output: "% 用法：ntp server <NTP服务器IP>", prompt: promptFor(dev, sess) };
+      }
+      dev.ntp.enabled = true;
+      if (dev.ntp.servers.indexOf(ntpIp) < 0) dev.ntp.servers.push(ntpIp);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("ntp source")) {
+      dev.ntp.enabled = true; dev.ntp.source = _pt[2] || null;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (_no() && pt("ntp")) {
+      dev.ntp.enabled = false; dev.ntp.servers = [];
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // AAA：aaa new-model / aaa authentication login local / aaa authorization exec
+    if (pt("aaa new-model")) {
+      dev.aaa.enabled = true; dev.aaa.protocol = "local";
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("aaa authentication") || pt("aaa authorization") || pt("aaa accounting")) {
+      dev.aaa.enabled = true;
+      var meth = _pt[3] || _pt[2] || "local";
+      dev.aaa.methods = meth;
+      if (/^tacacs/i.test(meth)) dev.tacacs.enabled = true;
+      if (/^radius/i.test(meth)) dev.radius.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("aaa group server")) {
+      // aaa group server tacacs|radius <name>
+      var sType = _pt[3], sName = _pt[4];
+      if (!sType || !sName) return { output: "% 用法：aaa group server <tacacs|radius> <组名>", prompt: promptFor(dev, sess) };
+      if (/^tacacs/i.test(sType)) dev.tacacs.enabled = true;
+      else dev.radius.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (_no() && pt("aaa new-model")) {
+      dev.aaa.enabled = false;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // TACACS+/RADIUS 服务器
+    if (pt("tacacs-server host")) {
+      var tacIp = _pt[2];
+      if (!tacIp || S().ipToInt(tacIp) === null) {
+        return { output: "% 用法：tacacs-server host <IP> [key <密钥>]", prompt: promptFor(dev, sess) };
+      }
+      dev.tacacs.enabled = true;
+      if (dev.tacacs.servers.indexOf(tacIp) < 0) dev.tacacs.servers.push(tacIp);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("radius-server host")) {
+      var radIp = _pt[2];
+      if (!radIp || S().ipToInt(radIp) === null) {
+        return { output: "% 用法：radius-server host <IP> [key <密钥>]", prompt: promptFor(dev, sess) };
+      }
+      dev.radius.enabled = true;
+      if (dev.radius.servers.indexOf(radIp) < 0) dev.radius.servers.push(radIp);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // SNMPv3：snmp-server user <名> <组> auth sha <密钥> priv aes 128 <密钥>
+    if (pt("snmp-server user")) {
+      dev.snmpv3.enabled = true;
+      dev.snmpv3.user = _pt[2] || null;
+      dev.snmpv3.group = _pt[3] || null;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("snmp-server group")) {
+      dev.snmpv3.enabled = true;
+      dev.snmpv3.group = _pt[2] || null;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 横幅：banner motd <文本>（一行版）
+    if (pt("banner motd")) {
+      dev.banner.motd = _pt.slice(2).join(" ");
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("banner login")) {
+      dev.banner.login = _pt.slice(2).join(" ");
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // config-register
+    if (pt("config-register")) {
+      dev.configRegister = _pt[2] || "0x102";
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // service password-recovery
+    if (pt("service password-recovery")) {
+      dev.servicePasswordRecovery = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // service timestamps
+    if (pt("service timestamps")) {
+      dev.logging.timestamps = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // history size
+    if (pt("history size")) {
+      var hs = parseInt(_pt[2], 10);
+      if (!isNaN(hs) && hs > 0) dev.historySize = hs;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ===== 思科对标：VTP =====
+    if (pt("vtp mode")) {
+      var vtMode = _pt[2];
+      if (!/^(server|client|transparent|off)$/i.test(vtMode)) {
+        return { output: "% VTP 模式：server / client / transparent / off", prompt: promptFor(dev, sess) };
+      }
+      dev.vtp.enabled = !/^off$/i.test(vtMode);
+      dev.vtp.mode = /^off$/i.test(vtMode) ? "server" : vtMode.toLowerCase();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("vtp domain")) {
+      dev.vtp.domain = _pt[2] || "";
+      dev.vtp.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("vtp version")) {
+      var vv = parseInt(_pt[2], 10);
+      if (vv !== 1 && vv !== 2 && vv !== 3) return { output: "% VTP 版本支持 1/2/3", prompt: promptFor(dev, sess) };
+      dev.vtp.version = vv; dev.vtp.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("vtp pruning")) {
+      dev.vtp.pruning = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("vtp password")) {
+      dev.vtp.password = _no() ? null : (_pt[2] || "");
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // vtp <server|client|transparent>（v2/v3 简写）
+    if (/^vtp\s+(server|client|transparent)$/i.test(line)) {
+      dev.vtp.mode = line.split(/\s+/)[1].toLowerCase();
+      dev.vtp.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ===== 思科对标：三层增强（全局） =====
+    // 思科式聚合负载分担：port-group <n> load-balance <算法>（全局配置）
+    if (pt("port-group") && _pt[2] && /^l/i.test(_pt[2])) {
+      var lbNum2 = _pt[1], lbAlgo2 = (_pt[3] || "").toLowerCase();
+      var lbOk2 = ["src-dst-ip", "src-dst-mac", "src-dst-port", "dst-ip", "dst-mac", "dst-port", "src-ip", "src-mac"];
+      if (lbOk2.indexOf(lbAlgo2) < 0) {
+        return { output: "% 负载分担算法：" + lbOk2.join(" / "), prompt: promptFor(dev, sess) };
+      }
+      if (!dev.portGroups[lbNum2]) dev.portGroups[lbNum2] = { mode: "on", ports: [] };
+      dev.portGroups[lbNum2].loadBalance = lbAlgo2;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 聚合组最小链路数：port-group <n> min-links <n>（全局配置）
+    if (pt("port-group") && _pt[2] && /^m/i.test(_pt[2])) {
+      if (!dev.portGroups[_pt[1]]) dev.portGroups[_pt[1]] = { mode: "on", ports: [] };
+      dev.portGroups[_pt[1]].minLinks = parseInt(_pt[3], 10);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ===== 思科对标：生成树全局增强 =====
+    if (pt("spanning-tree guard root")) {
+      dev.stp.rootGuard = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("spanning-tree portfast default") || pt("spanning-tree portfast")) {
+      // 全局默认边缘口
+      Object.keys(dev.ports).forEach(function (pn) { dev.ports[pn].portFast = !_no(); });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("spanning-tree bpduguard default")) {
+      Object.keys(dev.ports).forEach(function (pn) { dev.ports[pn].bpduGuard = !_no(); });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("spanning-tree mode")) {
+      // 已有逻辑在下面处理，这里只拦下 rpvst+/rapid-pvst
+      var stpMode = _pt[2];
+      if (/^(rpvst|rapid|rapid-pvst|rstp)$/i.test(stpMode)) {
+        dev.stp.mode = "rstp"; dev.stp.enabled = true;
+        ctx.refreshStp();
+        return { output: "", prompt: promptFor(dev, sess) };
+      }
+    }
+    if (pt("spanning-tree forward-time")) { dev.stp.timers.forward = parseInt(_pt[2], 10); return { output: "", prompt: promptFor(dev, sess) }; }
+    if (pt("spanning-tree hello-time")) { dev.stp.timers.hello = parseInt(_pt[2], 10); return { output: "", prompt: promptFor(dev, sess) }; }
+    if (pt("spanning-tree max-age")) { dev.stp.timers.maxAge = parseInt(_pt[2], 10); return { output: "", prompt: promptFor(dev, sess) }; }
     // ===== ACL 访问控制列表 =====
     // ip access-list <standard|extended> <编号>  进入 ACL 配置模式
     if (pt("ip access-list")) {
@@ -904,11 +1280,21 @@ function execLine(ctx, rawLine) {
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // username xxx password 0|7 yyy（课程：名≤16，密码≤8）
+    // 思科扩展：username xxx privilege <0-15> <口令>
+    var upm = line.match(/^username\s+(\S+)\s+privilege\s+(\d+)\s+(0|7)\s+(\S+)$/i);
+    if (upm) {
+      if (upm[1].length > 16) return { output: "% 用户名最长16字符", prompt: promptFor(dev, sess) };
+      var priv = parseInt(upm[2], 10);
+      if (priv < 0 || priv > 15) return { output: "% 特权级别范围 0~15", prompt: promptFor(dev, sess) };
+      dev.users = dev.users.filter(function (u) { return u.name !== upm[1]; });
+      dev.users.push({ name: upm[1], enc: upm[3], pass: upm[4], privilege: priv });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     var um = line.match(/^username\s+(\S+)\s+password\s+(0|7)\s+(\S+)$/i);
     if (um) {
       if (um[1].length > 16) return { output: "% 用户名最长16字符", prompt: promptFor(dev, sess) };
       dev.users = dev.users.filter(function (u) { return u.name !== um[1]; });
-      dev.users.push({ name: um[1], enc: um[2], pass: um[3] });
+      dev.users.push({ name: um[1], enc: um[2], pass: um[3], privilege: 1 });
       return { output: "", prompt: promptFor(dev, sess) };
     }
     var num = line.match(/^no\s+username\s+(\S+)$/i);
@@ -1017,6 +1403,42 @@ function execLine(ctx, rawLine) {
       else eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].qosPrio = pri; });
       return { output: "", prompt: promptFor(dev, sess) };
     }
+    // DHCP 中继（接口下）：ip helper-address <服务器IP>
+    if (ipt("ip helper-address")) {
+      var helperIp = _itp[2];
+      if (!helperIp || S().ipToInt(helperIp) === null) {
+        return { output: "% 用法：ip helper-address <DHCP服务器IP>", prompt: promptFor(dev, sess) };
+      }
+      if (!dev.ipHelper) dev.ipHelper = { enabled: false, servers: [], perIf: {} };
+      dev.ipHelper.enabled = true;
+      if (dev.ipHelper.servers.indexOf(helperIp) < 0) dev.ipHelper.servers.push(helperIp);
+      eachPort(function (pn) {
+        if (!dev.ports[pn] && pn.indexOf("vlan") !== 0) return;
+        if (!dev.ipHelper.perIf[pn]) dev.ipHelper.perIf[pn] = [];
+        if (dev.ipHelper.perIf[pn].indexOf(helperIp) < 0) dev.ipHelper.perIf[pn].push(helperIp);
+      });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (_ifNo && ipt("ip helper-address")) {
+      if (dev.ipHelper) { dev.ipHelper.servers = []; dev.ipHelper.perIf = {}; dev.ipHelper.enabled = false; }
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 代理 ARP（接口下）：proxy arp
+    if (ipt("proxy arp") || ipt("proxy-arp")) {
+      if (!dev.proxyArp) dev.proxyArp = { enabled: false, perIf: {} };
+      eachPort(function (pn) {
+        if (!dev.ports[pn]) return;
+        if (_ifNo) delete dev.proxyArp.perIf[pn];
+        else dev.proxyArp.perIf[pn] = true;
+      });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // DHCP 客户端：ip dhcp client
+    if (ipt("ip dhcp client")) {
+      if (!dev.dhcpClient) dev.dhcpClient = { enabled: false, server: null, leases: {} };
+      dev.dhcpClient.enabled = !_ifNo;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     // DHCP Snooping 信任口：ip dhcp snooping trust（可缩写 ip dhcp s trust）
     if (ipt("ip dhcp snooping trust")) {
       eachPort(function (pn) {
@@ -1065,6 +1487,79 @@ function execLine(ctx, rawLine) {
       else vg.state = "Master";
       return { output: "", prompt: promptFor(dev, sess) };
     }
+    // ===== 思科对标：接口级增强 =====
+    // spanning-tree portfast / bpduguard / bpdufilter / guard root
+    if (ipt("spanning-tree portfast")) {
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].portFast = !_ifNo; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (ipt("spanning-tree bpduguard") || ipt("spanning-tree guard bpduguard")) {
+      eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].bpduGuard = !_ifNo; dev.ports[pn].pduGuard = !_ifNo; } });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (ipt("spanning-tree bpdufilter") || ipt("spanning-tree guard bpdufilter")) {
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].bpduFilter = !_ifNo; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (ipt("spanning-tree guard root")) {
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].rootGuard = !_ifNo; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 思科式 edge / trunk 候选（DTP）
+    if (ipt("spanning-tree edge")) {
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].edgePort = !_ifNo; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 端口描述
+    var descM = _itp[0] && /^d/i.test(_itp[0]) ? _itp.slice(1).join(" ") : null;
+    if (descM !== null && _itp.length >= 1 && /^des/i.test(_itp[0])) {
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].description = _ifNo ? "" : descM; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 速率与双工：speed 100 / duplex full / negotiation auto
+    if (ipt("speed") && /^\d/.test(_itp[1] || "")) {
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].speed = _itp[1]; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (ipt("duplex")) {
+      var dx = _itp[1];
+      if (!/^(auto|full|half)$/i.test(dx)) return { output: "% 双工：auto / full / half", prompt: promptFor(dev, sess) };
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].duplex = dx.toLowerCase(); });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (ipt("negotiation")) {
+      var ng = _itp[1] || "auto";
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].negotiation = !/^non/i.test(ng); });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 风暴抑制：storm-control broadcast|multicast|unicast [level <n>]
+    if (ipt("storm-control")) {
+      var stKind = _itp[1] || "broadcast";
+      // 等级可能在 "level 5" 之后，扫描第一个数字 token
+      var stLevel = 0;
+      for (var sgi = 2; sgi < _itp.length; sgi++) {
+        if (/^\d+$/.test(_itp[sgi])) { stLevel = parseInt(_itp[sgi], 10); break; }
+      }
+      eachPort(function (pn) {
+        if (!dev.ports[pn]) return;
+        var s = dev.ports[pn].storm;
+        if (/^b/i.test(stKind)) s.broadcast = stLevel > 0;
+        else if (/^m/i.test(stKind)) s.multicast = stLevel > 0;
+        else if (/^u/i.test(stKind)) s.unicast = stLevel > 0;
+        s.level = stLevel;
+      });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // UDLD
+    if (ipt("udld")) {
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].udld = !_ifNo; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 802.1X
+    if (ipt("dot1x") || ipt("authentication port-control")) {
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].dot1x = !_ifNo; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     // 环路保护 / BPDU Guard
     if (ipt("loop-guard") || ipt("bpdu-guard")) {
       var lgOn = !_ifNo && (!_itp[1] || !/^d/i.test(_itp[1]));
@@ -1084,18 +1579,34 @@ function execLine(ctx, rawLine) {
     }
     // swi 别名：swi mode acc 等已处理；swi access vlan 兜底
     // ip address
-    // ip address / ip add / ip addr 都能识别
-    var iam = line.match(/^ip\s+(add(?:r|ress)?)\s+(\S+)\s+(\S+)$/i);
+    // ip address / ip add / ip addr 都能识别
+    var iam = line.match(/^ip\s+(add(?:r(?:ess)?)?)\s+(\S+)\s+(\S+)(\s+secondary)?$/i);
     if (iam) {
       if (S().ipToInt(iam[2]) === null || S().ipToInt(iam[3]) === null) return { output: "% IP/掩码错误", prompt: promptFor(dev, sess) };
+      var isSecondary = !!iam[4];
       ports.forEach(function (pn) {
         if (pn.indexOf("vlan") === 0) {
           var v = pn.replace("vlan", "");
-          dev.vlanIf[v] = { ip: iam[2], mask: iam[3] };
-          if (v === "1") { dev.mgmtIp = iam[2]; dev.mgmtMask = iam[3]; }
+          dev.vlanIf[v] = dev.vlanIf[v] || {};
+          if (isSecondary) {
+            dev.vlanIf[v].secondary = dev.vlanIf[v].secondary || [];
+            if (dev.vlanIf[v].secondary.every(function (x) { return x.ip !== iam[2]; })) {
+              dev.vlanIf[v].secondary.push({ ip: iam[2], mask: iam[3] });
+            }
+          } else {
+            dev.vlanIf[v].ip = iam[2]; dev.vlanIf[v].mask = iam[3];
+            if (v === "1") { dev.mgmtIp = iam[2]; dev.mgmtMask = iam[3]; }
+          }
         } else if (dev.ports[pn]) {
           dev.ifIp[pn] = dev.ifIp[pn] || {};
-          dev.ifIp[pn].ip = iam[2]; dev.ifIp[pn].mask = iam[3];
+          if (isSecondary) {
+            dev.ifIp[pn].secondary = dev.ifIp[pn].secondary || [];
+            if (dev.ifIp[pn].secondary.every(function (x) { return x.ip !== iam[2]; })) {
+              dev.ifIp[pn].secondary.push({ ip: iam[2], mask: iam[3] });
+            }
+          } else {
+            dev.ifIp[pn].ip = iam[2]; dev.ifIp[pn].mask = iam[3];
+          }
         }
       });
       return { output: "", prompt: promptFor(dev, sess) };
@@ -1144,7 +1655,26 @@ function execLine(ctx, rawLine) {
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // port-group N mode on|active|passive
-    var pgm = line.match(/^port-group\s+(\d+)\s+mode\s+(on|active|passive)$/i);
+    // 思科式聚合负载分担：port-group <n> load-balance <算法>
+  var pglb = line.match(/^port-group\s+(\d+)\s+load-balance\s+(\S+)$/i);
+  if (pglb) {
+    var lbNum = pglb[1], lbAlgo = pglb[2].toLowerCase();
+    var lbOk = ["src-dst-ip", "src-dst-mac", "src-dst-port", "dst-ip", "dst-mac", "dst-port", "src-ip", "src-mac"];
+    if (lbOk.indexOf(lbAlgo) < 0) {
+      return { output: "% 负载分担算法：" + lbOk.join(" / "), prompt: promptFor(dev, sess) };
+    }
+    if (!dev.portGroups[lbNum]) dev.portGroups[lbNum] = { mode: "on", ports: [] };
+    dev.portGroups[lbNum].loadBalance = lbAlgo;
+    return { output: "", prompt: promptFor(dev, sess) };
+  }
+  // 聚合组最小链路数：port-group <n> min-links <n>
+  var pgml = line.match(/^port-group\s+(\d+)\s+min-links\s+(\d+)$/i);
+  if (pgml) {
+    if (!dev.portGroups[pgml[1]]) dev.portGroups[pgml[1]] = { mode: "on", ports: [] };
+    dev.portGroups[pgml[1]].minLinks = parseInt(pgml[2], 10);
+    return { output: "", prompt: promptFor(dev, sess) };
+  }
+  var pgm = line.match(/^port-group\s+(\d+)\s+mode\s+(on|active|passive)$/i);
     if (pgm) {
       var gnum = pgm[1], gmode = pgm[2].toLowerCase();
       if (!dev.portGroups[gnum]) dev.portGroups[gnum] = { mode: gmode, ports: [] };
@@ -1171,7 +1701,12 @@ function execLine(ctx, rawLine) {
   // ===== vlan配置模式 =====
   if (sess.mode === "vlan") {
     var nm2 = line.match(/^name\s+(\S+)$/i);
-    if (nm2) { S().ensureVlan(dev, sess.vlanId).name = nm2[1]; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (nm2) {
+      S().ensureVlan(dev, sess.vlanId).name = nm2[1];
+      // VTP server 模式下把 VLAN 发布到 VTP 库
+      if (S().vtpPublish) S().vtpPublish(dev, sess.vlanId, nm2[1]);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     var swm = line.match(/^(switchport\s+interface|swi\w*\s+int\w*)\s+(.+)$/i);
     if (swm) {
       var plist = [];
@@ -1278,6 +1813,17 @@ function execLine(ctx, rawLine) {
   }
   // ===== rip =====
   if (sess.mode === "rip") {
+    if (/^timers\s+(update|invalid|hold|flush)\s+(\d+)$/i.test(line)) {
+      var tm = line.match(/^timers\s+(update|invalid|hold|flush)\s+(\d+)$/i);
+      dev.rip.timers[tm[1].toLowerCase()] = parseInt(tm[2], 10);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (/^no\s+poison-reverse$/i.test(line)) { dev.rip.poisonReverse = false; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^poison-reverse$/i.test(line)) { dev.rip.poisonReverse = true; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^no\s+split-horizon$/i.test(line)) { dev.rip.splitHorizon = false; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^split-horizon$/i.test(line)) { dev.rip.splitHorizon = true; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^default-information\s+originate$/i.test(line)) { dev.rip.defaultOriginate = true; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^no\s+default-information\s+originate$/i.test(line)) { dev.rip.defaultOriginate = false; return { output: "", prompt: promptFor(dev, sess) }; }
     if (/^version\s+2$/i.test(line)) { dev.rip.version = 2; return { output: "", prompt: promptFor(dev, sess) }; }
     if (/^version\s+1$/i.test(line)) { dev.rip.version = 1; return { output: "", prompt: promptFor(dev, sess) }; }
     if (/^auto-summary$/i.test(line)) { dev.rip.autoSummary = true; return { output: "", prompt: promptFor(dev, sess) }; }
@@ -1297,6 +1843,26 @@ function execLine(ctx, rawLine) {
   }
   // ===== ospf =====
   if (sess.mode === "ospf") {
+    if (/^auto-cost\s+reference-bandwidth\s+(\d+)$/i.test(line)) {
+      var bwM = line.match(/^auto-cost\s+reference-bandwidth\s+(\d+)$/i);
+      var bw = parseInt(bwM[1], 10);
+      if (isNaN(bw) || bw <= 0) return { output: "% 参考带宽需为正整数（Mbit）", prompt: promptFor(dev, sess) };
+      dev.ospf.referenceBandwidth = bw;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (/^log-adjacency-changes$/i.test(line)) { dev.ospf.logAdjacency = true; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^no\s+log-adjacency-changes$/i.test(line)) { dev.ospf.logAdjacency = false; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^default-information\s+originate(\s+always)?$/i.test(line)) {
+      dev.ospf.defaultOriginate = true;
+      dev.ospf.defaultOriginateAlways = /always/i.test(line);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (/^no\s+default-information\s+originate$/i.test(line)) { dev.ospf.defaultOriginate = false; return { output: "", prompt: promptFor(dev, sess) }; }
+    var arM = line.match(/^area\s+(\S+)$/i);
+    if (arM) {
+      if ((dev.ospf.areas || []).indexOf(arM[1]) < 0) dev.ospf.areas.push(arM[1]);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     var rid = line.match(/^router-id\s+(\S+)$/i);
     if (rid) {
       if (S().ipToInt(rid[1]) === null) return { output: "% router-id格式 X.X.X.X", prompt: promptFor(dev, sess) };

@@ -1790,6 +1790,15 @@ function init() {
     print(" ip access-list extended 100        创建ACL并进入配置模式\n seq 10 deny ip 192.168.1.0 0.0.0.255 10.0.0.0 0.0.0.255\n seq 20 permit ip any any\n 接口下 ip access-group 100 in    把ACL绑到端口（命中deny真实阻断流量）\n sh access-lists                    查看规则与应用位置");
     print(" 接口下 vrrp 1 ip 192.168.1.254     配置VRRP虚拟网关\n vrrp 1 priority 120                 优先级大者当Master\n sh vrrp                             查看组状态与当前Master");
     print(" service dhcp                      开启DHCP服务器\n ip dhcp pool office                创建地址池\n network 192.168.10.0 255.255.255.0 / default-router 192.168.10.254 / lease 7200\n sh ip dhcp pool / sh ip dhcp binding");
+    print("【思科对标：二层增强】", "ok");
+    print(" vtp mode server / vtp domain <名>   VTP集中管理VLAN（server向client下发）\n sh vtp / sh vtp status");
+    print(" 接口下 spanning-tree portfast      边缘口（接入口秒进FWD，不参与生成树）\n 接口下 spanning-tree bpduguard      接入口收到BPDU自动关端口（防误接成环）\n 接口下 spanning-tree guard root    根守卫\n sh spanning-tree detail");
+    print(" port-group <n> load-balance src-dst-mac   聚合负载分担算法\n sh etherchannel summary / sh etherchannel load-balance");
+    print(" 接口下 speed 1000 / duplex full / description <文本> / storm-control broadcast level 5\n sh interfaces status / sh interfaces trunk");
+    print("【思科对标：三层与运维】", "ok");
+    print(" 接口下 ip address <IP> <掩码> secondary   辅助地址\n 接口下 ip helper-address <服务器IP>      DHCP中继\n sh ip interface / sh ip helper / sh ip route static");
+    print(" router rip 1 下：timers update 20 / no poison-reverse / no split-horizon\n router ospf 1 下：auto-cost reference-bandwidth 1000 / log-adjacency-changes\n sh ip rip / sh ip ospf");
+    print(" logging host <IP> / clock timezone 8 / ntp server <IP> / aaa new-model\n sh logging / sh clock / sh aaa / sh version / sh device-info / sh users");
   };
   var be = $("btnEmptyLab"); if (be) be.onclick = function () { sel.value = "lab4"; loadLab("lab4"); };
   var bh = $("btnEmptyHelp"); if (bh) bh.onclick = function () { $("btnHelp").click(); };
