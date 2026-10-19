@@ -169,6 +169,7 @@ function createDevice(type, name, x, y) {
     id: "d" + Math.random().toString(36).substr(2, 8),
     type: type, // l2|l3|router|pc
     hostname: name || (type === "router" ? "Router" : type === "pc" ? "PC" : "Switch"),
+    factoryName: name || (type === "router" ? "Router" : type === "pc" ? "PC" : "Switch"),
     x: x || 0, y: y || 0,
     ports: makePorts(type),
     vlans: { "1": { id: 1, name: "default", members: [] } },
