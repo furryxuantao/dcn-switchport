@@ -120,6 +120,21 @@
 | 密码恢复 | `service password-recovery` | — |
 | 命令历史 | `history size <条数>` | — |
 
+### NAT / 策略路由 / 环路检测
+
+| 功能 | 配置命令 | 查看命令 |
+|------|----------|----------|
+| NAT 地址转换 | 接口下 `ip nat inside` / `ip nat outside`、全局 `ip nat pool <名> <起> <止>`、`ip nat overload`、`ip nat inside source list <ACL>` | `show ip nat` |
+| 策略路由 | `route-map <名> permit <序号>` → `match <条件>` / `set <下一跳>` | `show route-map` |
+| 二层环路检测 | `loop-detect enable`、`loop-detect threshold <n>` | `show loop-detect` |
+
+**NAT 真实生效**：内网地址经 inside 口进入后会被转换成地址池中的公网地址，
+同一内网地址复用同一转换，地址池耗尽则不再转换；`ip nat inside source list <ACL>`
+可限定只转换匹配 ACL 的流量。
+
+**二层环路检测真实生效**：MAC 在端口间反复漂移达到阈值即告警并中断转发，
+`ping` 返回「二层环路告警：MAC … 在端口间反复漂移（疑似环路）」。
+
 ## 目录
 - `index.html` 入口（拓扑画布 + CLI 终端 + 测试清单 + 抓包）
 - `src/sim-core.js` 转发/路由/MAC/STP/聚合/镜像/安全仿真（无 DOM，可 node 单测）
@@ -160,10 +175,11 @@ node test\ip-math-test.js   # IP 换算与位运算 33 项
 node test\cisco-parity-1-test.js # 思科对标：二层增强 83 项
 node test\cisco-parity-2-test.js # 思科对标：三层增强 62 项
 node test\cisco-parity-3-test.js # 思科对标：运维管理 72 项
+node test\cisco-parity-4-test.js # 思科对标：NAT/PBR/环路检测 53 项
 node test\latency-storm-test.js
 ```
 
-共 811 项自动化测试，全部通过。
+共 864 项自动化测试，全部通过。
 
 跑无头页面测试（载入实验、点击交互、标准答案端到端）需要 jsdom：
 
