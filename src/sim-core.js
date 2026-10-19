@@ -279,7 +279,17 @@ function createDevice(type, name, x, y) {
     //   pools: poolName -> {name, network, mask, gateway, dns, lease, start, end, vlan}
     //   bindings: mac -> {ip, pool, lease, expire}
     // ---- NAT ----
-    nat: { enabled: false, inside: [], outside: [], overload: false, translations: {} }
+    // NAT：inside/outside 接口、地址池、ACL 关联、转换表
+    nat: {
+      enabled: false, inside: [], outside: [], overload: false, translations: {},
+      pools: {},          // poolName -> {name, start, end, net, mask}
+      acl: null,          // 关联的 ACL 编号（只转换匹配的流量）
+      default: false      // 缺省 NAT：所有 inside 流量都转换
+    },
+    // 策略路由（PBR）：route-map 匹配后改写下一跳
+    pbr: { routeMaps: {}, ipPolicy: null },   // routeMaps: name -> {name, clauses:[{seq,match,set,permit}]}
+    // 二层环路检测：MAC 反复漂移告警
+    loopDetect: { enabled: false, threshold: 3, flaps: {}, alerts: [] }
   };
   if (type === "l2" || type === "l3" || type === "router") {
     // 默认所有access口在vlan1
@@ -974,6 +984,14 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
         if (isStpBlocked(dev, pn, stpInfo)) continue;
         // 端口隔离：入端口与出端口同属隔离组 → 丢弃（真机行为）
         if (cur.fromPort && isIsolated(dev, cur.fromPort, pn)) continue;
+        // 二层环路检测：MAC 在端口间反复漂移 → 告警
+        if (cur.srcMac && loopDetectFlap(dev, cur.srcMac, pn)) {
+          return {
+            ok: false, path: [],
+            reason: "二层环路告警：MAC " + cur.srcMac + " 在 " + dev.hostname +
+              " 的端口间反复漂移（疑似环路），已中断转发"
+          };
+        }
         var nb = neighborOnLink(allDevices, links, dev.id, pn);
         if (!nb || !nb.dev || !linkOperUp(allDevices, nb.link, stpInfo)) continue;
         if (isStpBlocked(nb.dev, nb.port, stpInfo)) continue;
@@ -1008,6 +1026,15 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     var rt = routeLookup(dev, dstIp, allDevices, links);
     if (!rt) continue; // 无路由
     var egressPort = rt.port, nextHopIp = rt.nextHop;
+    // ---- NAT：inside 接口的源地址转换为公网地址 ----
+    if (cur.fromPort && dev.nat && dev.nat.enabled && natRole(dev, cur.fromPort) === "inside") {
+      var natIp = natTranslate(dev, cur.srcIp, 0, cur.fromPort, dstIp);
+      if (natIp) {
+        // 源地址已转换，后续转发按公网地址进行
+        cur.srcIp = natIp;
+        cur.natApplied = true;
+      }
+    }
     if (rt.proto === "C") {
       if (egressPort && String(egressPort).indexOf("vlan") === 0) {
         // vlan 直连：带着 vid 从放行该 vlan 的口出去
@@ -2134,6 +2161,151 @@ function showStartupConfigSummary(dev) {
   L.push("end");
   return L.join("\n");
 }
+// ================= NAT 地址转换 =================
+// 判断某接口是否在 NAT inside/outside 列表中
+function natRole(dev, port) {
+  if (!dev.nat || !dev.nat.enabled) return null;
+  if ((dev.nat.inside || []).indexOf(port) >= 0) return "inside";
+  if ((dev.nat.outside || []).indexOf(port) >= 0) return "outside";
+  return null;
+}
+// 找一个可用公网地址
+function natPickAddress(dev) {
+  var pools = dev.nat.pools || {};
+  var names = Object.keys(pools);
+  for (var i = 0; i < names.length; i++) {
+    var pool = pools[names[i]];
+    var start = ipToInt(pool.start), end = ipToInt(pool.end);
+    if (start === null || end === null) continue;
+    var used = {};
+    Object.keys(dev.nat.translations || {}).forEach(function (k) {
+      used[ipToInt(dev.nat.translations[k].global)] = true;
+    });
+    for (var v = start; v <= end; v++) {
+      if (!used[v]) {
+        var ip = intToIp(v);
+        dev.nat.translations[ip] = { global: ip, inside: null, port: null, pool: pool.name };
+        return dev.nat.translations[ip];
+      }
+    }
+  }
+  return null;
+}
+// NAT 转换：inside 源地址 → 公网地址。返回转换后的源 IP
+function natTranslate(dev, srcIp, srcPort, inPort, dstIp) {
+  if (!dev.nat || !dev.nat.enabled) return null;
+  var role = natRole(dev, inPort);
+  if (role !== "inside") return null;
+  // 已有转换记录则复用
+  var k = srcIp + ":" + (srcPort || 0);
+  if (dev.nat.translations[k]) {
+    var ex = dev.nat.translations[k];
+    if (!ex.inside) { ex.inside = srcIp; ex.port = srcPort || 0; }
+    return ex.global;
+  }
+  // 关联了 ACL 时只转换匹配的流量
+  if (dev.nat.acl && dev.nat.acl !== "default") {
+    var lst = dev.acl && dev.acl.lists && dev.acl.lists[dev.nat.acl];
+    if (!lst) return null;
+    var matched = lst.rules.some(function (r) {
+      return aclRuleMatch(r, { srcIp: srcIp, dstIp: dstIp, proto: "ip", srcPort: srcPort || 0, dstPort: 0 });
+    });
+    if (!matched) return null;
+  }
+  var t = natPickAddress(dev);
+  if (!t) return null;
+  t.inside = srcIp; t.port = srcPort || 0;
+  dev.nat.translations[k] = t;
+  return t.global;
+}
+function showNat(dev) {
+  var n = dev.nat || {};
+  var L = [];
+  L.push("NAT 状态: " + (n.enabled ? "enabled" : "disabled"));
+  L.push("  inside 接口 : " + ((n.inside || []).length ? n.inside.join(", ") : "(none)"));
+  L.push("  outside 接口: " + ((n.outside || []).length ? n.outside.join(", ") : "(none)"));
+  L.push("  转换方式     : " + (n.overload ? "overload（复用端口）" : "静态一对一"));
+  L.push("  关联 ACL     : " + (n.acl || "(default，全部转换)"));
+  L.push("");
+  L.push("地址池 (NAT Pool):");
+  var names = Object.keys(n.pools || {});
+  if (!names.length) L.push("  （未配置）");
+  names.forEach(function (nm) {
+    var p = n.pools[nm];
+    L.push("  " + nm.padEnd(10, " ") + p.start + " - " + p.end);
+  });
+  L.push("");
+  L.push("转换表 (NAT Translations):");
+  var ks = Object.keys(n.translations || {}).filter(function (x) { return n.translations[x].inside; });
+  if (!ks.length) L.push("  （暂无转换记录）");
+  else {
+    L.push("  内网地址            外网地址            端口      协议");
+    ks.forEach(function (x) {
+      var t = n.translations[x];
+      L.push("  " + String(t.inside).padEnd(20, " ") + String(t.global).padEnd(20, " ") +
+        String(t.port || 0).padEnd(10, " ") + "---");
+    });
+  }
+  return L.join("\n");
+}
+// ================= 策略路由 PBR =================
+function showRouteMap(dev) {
+  var maps = (dev.pbr && dev.pbr.routeMaps) || {};
+  var names = Object.keys(maps);
+  if (!names.length) return "% 未配置 route-map（策略路由）";
+  var L = [];
+  names.forEach(function (nm) {
+    var m = maps[nm];
+    L.push("route-map " + nm + ", permit");
+    (m.clauses || []).forEach(function (c) {
+      L.push("  match " + c.match);
+      L.push("  set " + c.set);
+    });
+    L.push("");
+  });
+  if (dev.pbr.ipPolicy) L.push("已应用到接口: " + dev.pbr.ipPolicy);
+  return L.join("\n");
+}
+// ================= 二层环路检测 =================
+// 记录 MAC 在不同端口间的漂移次数，超过阈值即告警
+function loopDetectFlap(dev, mac, port) {
+  if (!dev.loopDetect || !dev.loopDetect.enabled) return false;
+  var f = dev.loopDetect.flaps;
+  var rec = f[mac];
+  if (!rec) { f[mac] = { port: port, count: 0 }; return false; }
+  if (rec.port !== port) {
+    rec.count++;
+    rec.port = port;
+    if (rec.count >= (dev.loopDetect.threshold || 3)) {
+      dev.loopDetect.alerts.push({
+        mac: mac, port: port, at: Date.now(),
+        msg: "MAC " + mac + " 在端口间反复漂移（已 " + rec.count + " 次），疑似二层环路"
+      });
+      if (dev.loopDetect.alerts.length > 50) dev.loopDetect.alerts.shift();
+      return true;
+    }
+  }
+  return false;
+}
+function showLoopDetect(dev) {
+  var l = dev.loopDetect || {};
+  var L = [];
+  L.push("二层环路检测: " + (l.enabled ? "enabled" : "disabled"));
+  L.push("告警阈值: " + (l.threshold || 3) + " 次");
+  L.push("");
+  L.push("MAC 漂移记录:");
+  var ks = Object.keys(l.flaps || {});
+  if (!ks.length) L.push("  （无）");
+  ks.forEach(function (m) {
+    L.push("  " + m + "  端口 " + l.flaps[m].port + "  漂移 " + l.flaps[m].count + " 次");
+  });
+  if ((l.alerts || []).length) {
+    L.push("");
+    L.push("告警:");
+    l.alerts.slice(-5).forEach(function (a) { L.push("  " + a.msg); });
+  }
+  return L.join("\n");
+}
 function showRunningConfig(dev) {
   var lines = ["Current configuration:", "!", "hostname " + dev.hostname];
   if (dev.enablePassword) lines.push("enable password level 15 " + dev.enablePassword);
@@ -2389,7 +2561,10 @@ var api = {
   // ---- 设备管理与运维 ----
   showVersion: showVersion, showDeviceInfo: showDeviceInfo, showLogging: showLogging,
   showClock: showClock, showAaa: showAaa, showUsers: showUsers,
-  showStartupConfigSummary: showStartupConfigSummary
+  showStartupConfigSummary: showStartupConfigSummary,
+  // ---- 批次4：NAT / PBR / 环路检测 ----
+  showNat: showNat, natTranslate: natTranslate, natRole: natRole,
+  showRouteMap: showRouteMap, loopDetectFlap: loopDetectFlap, showLoopDetect: showLoopDetect
 };
 
 if (typeof module !== "undefined" && module.exports) module.exports = api;

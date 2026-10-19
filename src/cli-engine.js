@@ -49,6 +49,7 @@ function promptFor(dev, sess) {
     case "ospf": return h + "(Config-ospf-" + (sess.ospfProc || 1) + ")#";
     case "acl": return h + "(Config-acl-" + (sess.aclId || "") + ")#";
     case "dhcp-pool": return h + "(Config-dhcp-pool-" + (sess.dhcpPool || "") + ")#";
+    case "route-map": return h + "(Config-route-map-" + (sess.routeMapName || "") + ")#";
     default: return h + "#";
   }
 }
@@ -113,6 +114,9 @@ var HELP = {
     ["show clock", "查看时钟与NTP"],
     ["show aaa", "查看AAA配置"],
     ["show users", "查看本地用户与特权级"],
+    ["show ip nat", "查看NAT配置与转换表"],
+    ["show route-map", "查看策略路由"],
+    ["show loop-detect", "查看二层环路检测记录"],
     ["set default", "恢复到出厂设置"],
     ["write", "保存当前配置信息"],
     ["reload / reboot", "重新启动"],
@@ -169,6 +173,13 @@ var HELP = {
     ["config-register <值>", "设置配置寄存器"],
     ["service password-recovery", "启用密码恢复"],
     ["history size <条数>", "设置命令历史条数"],
+    // ---- NAT / PBR / 环路检测 ----
+    ["ip nat inside / ip nat outside", "标记NAT内外网接口（接口下）"],
+    ["ip nat pool <名> <起> <止>", "配置NAT地址池"],
+    ["ip nat overload", "端口复用（PAT）"],
+    ["ip nat inside source list <ACL>", "只对匹配ACL的流量做转换"],
+    ["route-map <名> permit <序号>", "创建策略路由并进入配置模式"],
+    ["loop-detect enable", "开启二层环路检测（MAC漂移告警）"],
     // ---- ACL / VRRP / DHCP 服务器 ----
     ["ip access-list <standard|extended> <编号>", "创建ACL并进入配置模式"],
     ["ip access-list extended <编号> → permit/deny", "ACL规则：seq <n> permit ip <源> <目的> [eq 端口] [log]"],
@@ -327,6 +338,7 @@ function candidatesFor(mode) {
     add("show ip rip"); add("show ip ospf"); add("show ip route static");
     add("show version"); add("show device-info"); add("show logging");
     add("show clock"); add("show aaa"); add("show users");
+    add("show ip nat"); add("show route-map"); add("show loop-detect");
     add("show vtp"); add("show vtp status");
     add("show spanning-tree detail"); add("show spanning-tree root");
     add("show etherchannel summary"); add("show etherchannel load-balance");
@@ -366,6 +378,10 @@ function candidatesFor(mode) {
     add("username <name> privilege <0-15> <0|7> <pass>");
     add("config-register <val>"); add("service password-recovery");
     add("service timestamps"); add("history size <n>");
+    add("ip nat pool <name> <start> <end>"); add("ip nat overload");
+    add("ip nat inside source list <acl>");
+    add("route-map <name> permit <seq>");
+    add("loop-detect enable"); add("loop-detect threshold <n>");
     add("ip access-list <standard|extended> <num>");
     add("ip access-list extended <num>"); add("no ip access-list <num>");
     add("service dhcp"); add("no service dhcp");
@@ -398,6 +414,7 @@ function candidatesFor(mode) {
     add("spanning-tree edge"); add("description <text>");
     add("speed <10|100|1000>"); add("duplex <auto|full|half>"); add("negotiation auto");
     add("storm-control broadcast level <n>"); add("udld enable"); add("dot1x port-control auto"); add("proxy arp"); add("ip helper-address <ip>");
+    add("ip nat inside"); add("ip nat outside");
     add("switchport priority <0-7>"); add("ip dhcp snooping trust"); add("no ip dhcp snooping trust");
     add("loop-guard enable"); add("no loop-guard"); add("switchport speed limit <kbps>");
     add("shutdown"); add("no shutdown"); add("no shutdown"); add("ip address <a> <m>");
@@ -619,7 +636,9 @@ function execLine(ctx, rawLine) {
       // ---- 三层增强 ----
       "ip interface", "ip route static", "ip helper", "ip proxy-arp", "ip rip", "ip ospf",
       // ---- 设备管理与运维 ----
-      "version", "device-info", "logging", "clock", "aaa", "users", "system-info"];
+      "version", "device-info", "logging", "clock", "aaa", "users", "system-info",
+      // ---- NAT / PBR / 环路检测 ----
+      "ip nat", "nat", "route-map", "loop-detect"];
     var restT = tokensOf(rest);
     var r0 = restT[0] || "";
     // show running-config（sh run / sh ru / sh running-config）
@@ -704,6 +723,10 @@ function execLine(ctx, rawLine) {
     if (key === "clock") return { output: Sim.showClock(dev), prompt: promptFor(dev, sess) };
     if (key === "aaa") return { output: Sim.showAaa(dev), prompt: promptFor(dev, sess) };
     if (key === "users") return { output: Sim.showUsers(dev), prompt: promptFor(dev, sess) };
+    // ---- NAT / PBR / 环路检测 ----
+    if (key === "ip nat" || key === "nat") return { output: Sim.showNat(dev), prompt: promptFor(dev, sess) };
+    if (key === "route-map") return { output: Sim.showRouteMap(dev), prompt: promptFor(dev, sess) };
+    if (key === "loop-detect") return { output: Sim.showLoopDetect(dev), prompt: promptFor(dev, sess) };
     if (key === "monitor") return { output: Sim.showMonitor(dev), prompt: promptFor(dev, sess) };
     if (key === "port-security") return { output: Sim.showPortSecurity(dev, null), prompt: promptFor(dev, sess) };
     // ---- DCN 企业级特性 show ----
@@ -931,6 +954,53 @@ function execLine(ctx, rawLine) {
       if (!dev.ipHelper) dev.ipHelper = { enabled: false, servers: [], perIf: {} };
       dev.ipHelper.enabled = true;
       if (dev.ipHelper.servers.indexOf(gHelper) < 0) dev.ipHelper.servers.push(gHelper);
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // ===== NAT / PBR / 环路检测：全局配置 =====
+    // ip nat overload / ip nat pool <名> <起> <止> / ip nat inside source list <acl>
+    if (pt("ip nat overload")) {
+      dev.nat.enabled = true; dev.nat.overload = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("ip nat pool")) {
+      var npName = _pt[3], npStart = _pt[4], npEnd = _pt[5];
+      if (!npName || !npStart) {
+        return { output: "% 用法：ip nat pool <名> <起始IP> <结束IP>", prompt: promptFor(dev, sess) };
+      }
+      if (S().ipToInt(npStart) === null || (npEnd && S().ipToInt(npEnd) === null)) {
+        return { output: "% 地址池 IP 格式错误", prompt: promptFor(dev, sess) };
+      }
+      dev.nat.enabled = true;
+      dev.nat.pools[npName] = { name: npName, start: npStart, end: npEnd || npStart };
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("ip nat inside source list")) {
+      dev.nat.enabled = true;
+      dev.nat.acl = _pt[5] || "default";
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 策略路由：route-map <名> permit <序号>
+    if (pt("route-map")) {
+      if (!dev.pbr) dev.pbr = { routeMaps: {}, ipPolicy: null };
+      var rmName = _pt[1], rmAction = _pt[2] || "permit", rmSeq = _pt[3] ? parseInt(_pt[3], 10) : 10;
+      if (!rmName) return { output: "% 用法：route-map <名> permit <序号>", prompt: promptFor(dev, sess) };
+      if (!dev.pbr.routeMaps[rmName]) {
+        dev.pbr.routeMaps[rmName] = { name: rmName, clauses: [] };
+        sess.mode = "route-map";
+        sess.routeMapName = rmName;
+        sess.routeMapSeq = rmSeq;
+        return { output: "", prompt: promptFor(dev, sess) };
+      }
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    // 二层环路检测：loop-detect enable / loop-detect threshold <n>
+    if (pt("loop-detect enable")) {
+      dev.loopDetect.enabled = !_no();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (pt("loop-detect threshold")) {
+      var ldT = parseInt(_pt[2], 10);
+      if (!isNaN(ldT) && ldT > 0) { dev.loopDetect.threshold = ldT; dev.loopDetect.enabled = true; }
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // ===== 设备管理与运维：全局配置 =====
@@ -1423,6 +1493,25 @@ function execLine(ctx, rawLine) {
       if (dev.ipHelper) { dev.ipHelper.servers = []; dev.ipHelper.perIf = {}; dev.ipHelper.enabled = false; }
       return { output: "", prompt: promptFor(dev, sess) };
     }
+    // NAT 内外网标记：ip nat inside / ip nat outside
+    if (ipt("ip nat inside")) {
+      dev.nat.enabled = true;
+      eachPort(function (pn) {
+        if (!dev.ports[pn]) return;
+        var i = dev.nat.inside.indexOf(pn);
+        if (i < 0) dev.nat.inside.push(pn);
+      });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    if (ipt("ip nat outside")) {
+      dev.nat.enabled = true;
+      eachPort(function (pn) {
+        if (!dev.ports[pn]) return;
+        var i = dev.nat.outside.indexOf(pn);
+        if (i < 0) dev.nat.outside.push(pn);
+      });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     // 代理 ARP（接口下）：proxy arp
     if (ipt("proxy arp") || ipt("proxy-arp")) {
       if (!dev.proxyArp) dev.proxyArp = { enabled: false, perIf: {} };
@@ -1698,6 +1787,26 @@ function execLine(ctx, rawLine) {
     return { output: "% 未知接口命令（输入 ? 查看；支持缩写如 swi mode acc / no shut / ip add）", prompt: promptFor(dev, sess) };
   }
 
+  // ===== route-map 配置模式（策略路由）=====
+  if (sess.mode === "route-map") {
+    var rm = dev.pbr.routeMaps[sess.routeMapName] || { name: sess.routeMapName, clauses: [] };
+    if (/^exit$/i.test(line)) { enterMode(sess, "global"); return { output: "", prompt: promptFor(dev, sess) }; }
+    var mtM = line.match(/^match\s+(.+)$/i);
+    if (mtM) {
+      var cl = rm.clauses.filter(function (c) { return c.seq === sess.routeMapSeq; })[0];
+      if (!cl) { cl = { seq: sess.routeMapSeq, match: "", set: "" }; rm.clauses.push(cl); }
+      cl.match = mtM[1].trim();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    var stM = line.match(/^set\s+(.+)$/i);
+    if (stM) {
+      var cl2 = rm.clauses.filter(function (c) { return c.seq === sess.routeMapSeq; })[0];
+      if (!cl2) { cl2 = { seq: sess.routeMapSeq, match: "", set: "" }; rm.clauses.push(cl2); }
+      cl2.set = stM[1].trim();
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
+    return { output: "% route-map模式：match <条件> / set <下一跳> / exit", prompt: promptFor(dev, sess) };
+  }
   // ===== vlan配置模式 =====
   if (sess.mode === "vlan") {
     var nm2 = line.match(/^name\s+(\S+)$/i);

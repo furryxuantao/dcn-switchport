@@ -1799,6 +1799,10 @@ function init() {
     print(" 接口下 ip address <IP> <掩码> secondary   辅助地址\n 接口下 ip helper-address <服务器IP>      DHCP中继\n sh ip interface / sh ip helper / sh ip route static");
     print(" router rip 1 下：timers update 20 / no poison-reverse / no split-horizon\n router ospf 1 下：auto-cost reference-bandwidth 1000 / log-adjacency-changes\n sh ip rip / sh ip ospf");
     print(" logging host <IP> / clock timezone 8 / ntp server <IP> / aaa new-model\n sh logging / sh clock / sh aaa / sh version / sh device-info / sh users");
+    print("【NAT / 策略路由 / 环路检测】", "ok");
+    print(" 接口下 ip nat inside / ip nat outside   标记NAT内外网口\n ip nat pool POOL1 203.0.113.10 203.0.113.20   地址池\n ip nat overload          端口复用(PAT)\n ip nat inside source list 100   只转换匹配ACL的流量\n sh ip nat                查看转换表");
+    print(" route-map MYMAP permit 10 → match ip address 100 / set ip next-hop 10.0.0.2\n sh route-map             查看策略路由");
+    print(" loop-detect enable     开启二层环路检测（MAC漂移告警）\n sh loop-detect");
   };
   var be = $("btnEmptyLab"); if (be) be.onclick = function () { sel.value = "lab4"; loadLab("lab4"); };
   var bh = $("btnEmptyHelp"); if (bh) bh.onclick = function () { $("btnHelp").click(); };
