@@ -1,6 +1,6 @@
 {
   "name": "dcn-simulator",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "神州数码 DCN 网络模拟器（类 Packet Tracer，指令按课程 PPT/实验报告）",
   "main": "main.js",
   "scripts": {

@@ -154,7 +154,7 @@ function makePorts(type) {
       isolateGroup: 0,         // 端口隔离组号，0=不隔离
       qosPrio: 0,              // 802.1p 优先级 0~7
       loopGuard: false,        // 环路保护
-      BPDUGuard: false,
+      bpduGuard: false,       // BPDU Guard
       // ---- 思科式端口增强 ----
       portFast: false,         // 边缘口：接终端，秒进 FWD
       bpduFilter: false,       // BPDU 过滤：静默丢弃收到的 BPDU
@@ -2169,24 +2169,23 @@ function natRole(dev, port) {
   if ((dev.nat.outside || []).indexOf(port) >= 0) return "outside";
   return null;
 }
-// 找一个可用公网地址
+// 找一个可用公网地址（不预先建记录，由调用方统一写入）
 function natPickAddress(dev) {
   var pools = dev.nat.pools || {};
   var names = Object.keys(pools);
+  // 已被占用的公网地址
+  var used = {};
+  Object.keys(dev.nat.translations || {}).forEach(function (k) {
+    var t = dev.nat.translations[k];
+    if (t && t.global) used[ipToInt(t.global)] = true;
+  });
   for (var i = 0; i < names.length; i++) {
     var pool = pools[names[i]];
     var start = ipToInt(pool.start), end = ipToInt(pool.end);
     if (start === null || end === null) continue;
-    var used = {};
-    Object.keys(dev.nat.translations || {}).forEach(function (k) {
-      used[ipToInt(dev.nat.translations[k].global)] = true;
-    });
+    if (start > end) { var t2 = start; start = end; end = t2; }
     for (var v = start; v <= end; v++) {
-      if (!used[v]) {
-        var ip = intToIp(v);
-        dev.nat.translations[ip] = { global: ip, inside: null, port: null, pool: pool.name };
-        return dev.nat.translations[ip];
-      }
+      if (!used[v]) return { global: intToIp(v), inside: null, port: null, pool: pool.name };
     }
   }
   return null;
