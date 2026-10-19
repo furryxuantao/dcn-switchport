@@ -9,7 +9,31 @@ function S() { return global.DCNSim; }
 
 // ---------- 会话 ----------
 function createSession(dev) {
-  return { devId: dev.id, mode: dev.type === "pc" ? "pc" : "user", ifPorts: [], vlanId: null, ripProc: null, ospfProc: null, authed: false };
+  var s = { devId: dev.id, mode: dev.type === "pc" ? "pc" : "user", ifPorts: [], vlanId: null, ripProc: null, ospfProc: null, authed: false };
+  // 统一的模式切换：进入新模式时清掉其它模式遗留的上下文，避免状态串味
+  s.enter = function (m) {
+    s.mode = m;
+    if (m !== "if") s.ifPorts = [];
+    if (m !== "vlan") s.vlanId = null;
+    if (m !== "rip") s.ripProc = null;
+    if (m !== "ospf") s.ospfProc = null;
+    if (m !== "acl") s.aclId = null;
+    if (m !== "dhcp-pool") s.dhcpPool = null;
+    return s.mode;
+  };
+  return s;
+}
+// 兼容没有 enter 的外部 session（兜底：直接改 mode）
+function enterMode(sess, m) {
+  if (typeof sess.enter === "function") return sess.enter(m);
+  sess.mode = m;
+  if (m !== "if") sess.ifPorts = [];
+  if (m !== "vlan") sess.vlanId = null;
+  if (m !== "rip") sess.ripProc = null;
+  if (m !== "ospf") sess.ospfProc = null;
+  if (m !== "acl") sess.aclId = null;
+  if (m !== "dhcp-pool") sess.dhcpPool = null;
+  return m;
 }
 function promptFor(dev, sess) {
   var h = dev.hostname || (dev.type === "router" ? "Router" : "Switch");
@@ -439,13 +463,13 @@ function execLine(ctx, rawLine) {
   // ===== 通用：exit / enable / config =====
   if (uniq(line, ["exit"]) === "exit") {
     if (sess.mode === "user") return { output: "", prompt: promptFor(dev, sess) };
-    if (sess.mode === "priv") { sess.mode = "user"; return { output: "", prompt: promptFor(dev, sess) }; }
-    if (sess.mode === "global") { sess.mode = "priv"; return { output: "", prompt: promptFor(dev, sess) }; }
-    sess.mode = "global"; sess.ifPorts = [];
+    if (sess.mode === "priv") { enterMode(sess, "user"); return { output: "", prompt: promptFor(dev, sess) }; }
+    if (sess.mode === "global") { enterMode(sess, "priv"); return { output: "", prompt: promptFor(dev, sess) }; }
+    enterMode(sess, "global"); sess.ifPorts = [];
     return { output: "", prompt: promptFor(dev, sess) };
   }
   if (uniq(toks[0], ["end"]) === "end" && sess.mode !== "user" && sess.mode !== "priv") {
-    sess.mode = "priv"; sess.ifPorts = [];
+    enterMode(sess, "priv"); sess.ifPorts = [];
     return { output: "", prompt: promptFor(dev, sess) };
   }
   // 会话管理：jump <设备名> 切换终端上下文 / sessions 看所有设备
@@ -472,16 +496,16 @@ function execLine(ctx, rawLine) {
         sess.pendingEnable = true;
         return { output: "Password:", prompt: promptFor(dev, sess), needSecret: true };
       }
-      sess.mode = "priv"; return { output: "", prompt: promptFor(dev, sess) };
+      enterMode(sess, "priv"); return { output: "", prompt: promptFor(dev, sess) };
     }
     return { output: "", prompt: promptFor(dev, sess) };
   }
   // enable密码输入（终端UI以needSecret标记后把下一行当密码）
   if (sess.pendingEnable) {
     sess.pendingEnable = false;
-    if (line === dev.enablePassword) { sess.mode = "priv"; sess.authed = true; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (line === dev.enablePassword) { enterMode(sess, "priv"); sess.authed = true; return { output: "", prompt: promptFor(dev, sess) }; }
     // 密码错误后仍停留在 user 模式，允许重试 enable
-    sess.mode = "user";
+    enterMode(sess, "user");
     return { output: "% 密码错误", prompt: promptFor(dev, sess) };
   }
   // 改过 enable 密码后，旧的登录态失效，需重新输入
@@ -490,7 +514,7 @@ function execLine(ctx, rawLine) {
   if (ctHit === "config terminal" || uniq(line, ["config"]) === "config") {
     if (sess.mode === "priv") {
       if (dev.configLocked) return { output: "The CONFIG mode is locked by other user, now only one user can login!", prompt: promptFor(dev, sess) };
-      sess.mode = "global"; return { output: "", prompt: promptFor(dev, sess) };
+      enterMode(sess, "global"); return { output: "", prompt: promptFor(dev, sess) };
     }
   }
 
@@ -581,7 +605,7 @@ function execLine(ctx, rawLine) {
   if (uniq(line, ["set default"]) === "set default" && sess.mode === "priv") {
     // 出厂：保留实现为重置动态状态（由UI层真正重置，这里给提示）
     ctx.factoryReset(dev);
-    sess.mode = "priv";
+    enterMode(sess, "priv");
     return { output: "Set default OK. 请 write + reload 生效。", prompt: promptFor(dev, sess) };
   }
   if (uniq(line, ["delete"]) === "delete" && sess.mode === "priv") {
@@ -769,7 +793,7 @@ function execLine(ctx, rawLine) {
       dev.acl = dev.acl || { lists: {} };
       dev.acl.lists[String(aclNum)] = dev.acl.lists[String(aclNum)] || { id: String(aclNum), name: "", rules: [] };
       dev.acl.lists[String(aclNum)].type = aclType;
-      sess.mode = "acl";
+      enterMode(sess, "acl");
       sess.aclId = String(aclNum);
       sess.aclType = aclType;
       return { output: "", prompt: promptFor(dev, sess) };
@@ -794,7 +818,7 @@ function execLine(ctx, rawLine) {
       if (!pname) return { output: "% 用法：ip dhcp pool <名字>", prompt: promptFor(dev, sess) };
       dev.dhcp.pools[pname] = dev.dhcp.pools[pname] || { name: pname, lease: 3600 };
       dev.dhcp.enabled = true;
-      sess.mode = "dhcp-pool";
+      enterMode(sess, "dhcp-pool");
       sess.dhcpPool = pname;
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -813,7 +837,7 @@ function execLine(ctx, rawLine) {
     }
     // vlan XX
     if (matchPattern([toks[0]], ["vlan"]) && toks.length === 2 && /^\d+$/.test(toks[1])) {
-      Sim.ensureVlan(dev, toks[1]); sess.mode = "vlan"; sess.vlanId = toks[1];
+      Sim.ensureVlan(dev, toks[1]); enterMode(sess, "vlan"); sess.vlanId = toks[1];
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // interface X（支持 interface e1/0/1-4 / int vlan 20 / int g0/0）
@@ -823,7 +847,7 @@ function execLine(ctx, rawLine) {
       var mv = restIf.match(/^vlan\s*(\d+)$/i);
       if (mv) {
         var vid = mv[1]; Sim.ensureVlan(dev, vid);
-        sess.mode = "if"; sess.ifPorts = ["vlan" + vid];
+        enterMode(sess, "if"); sess.ifPorts = ["vlan" + vid];
         return { output: "", prompt: promptFor(dev, sess) };
       }
       // 去空格后解析范围
@@ -834,7 +858,7 @@ function execLine(ctx, rawLine) {
       });
       ports = ports.filter(function (p) { return dev.ports[p] || p.indexOf("vlan") === 0; });
       if (!ports.length) return { output: "% 端口不存在（例：e1/0/1, e1/0/1-4, g0/0, s1/0, vlan10）", prompt: promptFor(dev, sess) };
-      sess.mode = "if"; sess.ifPorts = ports;
+      enterMode(sess, "if"); sess.ifPorts = ports;
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // spanning-tree 系列
@@ -842,7 +866,7 @@ function execLine(ctx, rawLine) {
       var st = line.replace(/^spanning-tree\s*/i, "").trim();
       if (!st) { dev.stp.enabled = true; ctx.refreshStp(); return { output: "MSTP is starting now, please wait...........\nMSTP is enabled successfully.", prompt: promptFor(dev, sess) }; }
       if (uniq(st, ["mode mstp"]) === "mode mstp") { dev.stp.mode = "mstp"; dev.stp.enabled = true; ctx.refreshStp(); return { output: "", prompt: promptFor(dev, sess) }; }
-      if (uniq(st, ["mst configuration"]) === "mst configuration") { sess.mode = "mstp"; return { output: "", prompt: promptFor(dev, sess) }; }
+      if (uniq(st, ["mst configuration"]) === "mst configuration") { enterMode(sess, "mstp"); return { output: "", prompt: promptFor(dev, sess) }; }
       var mm = st.match(/^mst\s+(\d+)\s+priority\s+(\d+)$/i);
       if (mm) {
         var pri = parseInt(mm[2], 10);
@@ -903,12 +927,12 @@ function execLine(ctx, rawLine) {
       var proto = rm[1].toLowerCase(), tail = rm[2].trim();
       if (proto === "rip") {
         var proc = tail ? parseInt(tail, 10) : 1;
-        dev.rip.enabled = true; dev.rip.proc = proc || 1; sess.mode = "rip"; sess.ripProc = dev.rip.proc;
+        dev.rip.enabled = true; dev.rip.proc = proc || 1; enterMode(sess, "rip"); sess.ripProc = dev.rip.proc;
         return { output: "", prompt: promptFor(dev, sess) };
       } else {
         var op = tail ? parseInt(tail, 10) : 1;
         if (!(op >= 1 && op <= 65535)) return { output: "% OSPF进程号1-65535", prompt: promptFor(dev, sess) };
-        dev.ospf.enabled = true; dev.ospf.proc = op; sess.mode = "ospf"; sess.ospfProc = op;
+        dev.ospf.enabled = true; dev.ospf.proc = op; enterMode(sess, "ospf"); sess.ospfProc = op;
         return { output: "", prompt: promptFor(dev, sess) };
       }
     }
@@ -1135,7 +1159,7 @@ function execLine(ctx, rawLine) {
     }
     // interface 嵌套切换：直接透传 ctx，避免手工列举字段漏掉新能力（如 stream）
     if (/^interface\b/i.test(line)) {
-      sess.mode = "global";
+      enterMode(sess, "global");
       var sub = {}, k;
       for (k in ctx) if (Object.prototype.hasOwnProperty.call(ctx, k)) sub[k] = ctx[k];
       sub.dev = dev; sub.sess = sess;
@@ -1162,9 +1186,9 @@ function execLine(ctx, rawLine) {
   // ===== ACL 配置模式 =====
   if (sess.mode === "acl") {
     var lst = dev.acl.lists[sess.aclId];
-    if (/^exit$/i.test(line)) { sess.mode = "global"; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^exit$/i.test(line)) { enterMode(sess, "global"); return { output: "", prompt: promptFor(dev, sess) }; }
     if (/^no\s+ip\s+access-list\s+(\d+)$/i.test(line)) {
-      delete dev.acl.lists[sess.aclId]; sess.mode = "global";
+      delete dev.acl.lists[sess.aclId]; enterMode(sess, "global");
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // remark 描述
@@ -1226,7 +1250,7 @@ function execLine(ctx, rawLine) {
   // ===== DHCP pool 配置模式 =====
   if (sess.mode === "dhcp-pool") {
     var pool = dev.dhcp.pools[sess.dhcpPool];
-    if (/^exit$/i.test(line)) { sess.mode = "global"; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (/^exit$/i.test(line)) { enterMode(sess, "global"); return { output: "", prompt: promptFor(dev, sess) }; }
     var pn3 = line.match(/^network\s+(\S+)\s+(\S+)$/i);
     if (pn3) { pool.network = pn3[1]; pool.mask = pn3[2]; return { output: "", prompt: promptFor(dev, sess) }; }
     var dr3 = line.match(/^default-router\s+(\S+)$/i);
@@ -1268,7 +1292,7 @@ function execLine(ctx, rawLine) {
     var pi2 = line.match(/^passive-interface\s+(\S+)$/i);
     if (pi2) { var pp2 = S().normalizePort(pi2[1]); if (pp2) dev.rip.passiveIfs[pp2] = true; return { output: "", prompt: promptFor(dev, sess) }; }
     // 允许在rip模式直接 interface xxx（跳回global处理）
-    if (/^interface\b/i.test(line)) { sess.mode = "global"; return execLine(ctx, line); }
+    if (/^interface\b/i.test(line)) { enterMode(sess, "global"); return execLine(ctx, line); }
     return { output: "% rip模式：version 2 / auto-summary / network vlan X / passive-interface（?查看）", prompt: promptFor(dev, sess) };
   }
   // ===== ospf =====

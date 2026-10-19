@@ -11,9 +11,13 @@ function ipToInt(ip) {
   if (p.length !== 4) return null;
   var n = 0;
   for (var i = 0; i < 4; i++) {
+    // 必须整段都是数字：parseInt("1x") 会返回 1，导致 "1.1.1.1x" 被误判为合法
+    if (!/^\d{1,3}$/.test(p[i])) return null;
     var v = parseInt(p[i], 10);
     if (isNaN(v) || v < 0 || v > 255) return null;
-    n = (n * 256) + v;
+    // 用位运算而非 n*256：乘法在超过 2^31 后会退化为浮点，精度丢失
+    // （曾导致 192.168.10.0 被算成 192.168.0.0）
+    n = ((n << 8) | v) >>> 0;
   }
   return n >>> 0;
 }
@@ -787,6 +791,8 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     return true;
   }
   // 起点：PC 从所接端口进入 vlan；交换机/路由 CLI 发起为无标签
+  // 注意：二层转发按 VLAN 广播域判定隔离，不按 IP 网段——
+  // 课程实验（VLAN 隔离 / 三层交换互访）的判据就是 VLAN。
   if (srcDev.type === "pc") {
     var snb = firstLinkNeighbor(allDevices, links, srcDev);
     if (!snb || !snb.dev) return { ok: false, reason: "本机未连线", path: [] };
@@ -806,7 +812,10 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
       return { ok: true, path: cur.path, reason: "到达", latency: measurePing(allDevices, links, srcDev, dstIp, stpInfo) };
     }
     if (dev.type === "pc") {
-      // PC 发包：从所接端口进入其所属 vlan 广播域
+      // PC 是终端，不转发帧：只有「本机就是源」时才把报文注入它所接的 vlan 广播域。
+      // 否则（PC 只是路径中间节点）直接丢弃——否则 PC 会变成中继器，
+      // 导致端口隔离等二层安全机制被绕过。
+      if (dev.id !== srcDev.id) continue;
       var nb2 = firstLinkNeighbor(allDevices, links, dev);
       if (!nb2 || !nb2.dev || !linkOperUp(allDevices, nb2.link, stpInfo)) continue;
       var v2 = l2ingress(nb2.dev, nb2.port, cur.vlan);
@@ -1502,9 +1511,18 @@ function dhcpAllocate(dev, mac, poolName) {
   Object.keys(dev.dhcp.bindings).forEach(function (m) { used[ipToInt(dev.dhcp.bindings[m].ip)] = m; });
   var net = ipToInt(pool.network), mask = ipToInt(pool.mask);
   if (net === null || mask === null) return null;
-  var start = ipToInt(pool.start || pool.network), end = ipToInt(pool.end || pool.network);
+  var netAddr = net, bcastAddr = (net | (~mask)) >>> 0;
+  // 未配 range 时默认使用整个网段（真机行为：network 配好即隐含整段可用）
+  var start, end;
+  if (pool.start && pool.end) {
+    start = ipToInt(pool.start); end = ipToInt(pool.end);
+  } else {
+    start = netAddr + 1; end = bcastAddr - 1;
+  }
   if (start > end) { var t = start; start = end; end = t; }
+  // 网络地址与广播地址不可分配
   for (var v = start; v <= end; v++) {
+    if (v === netAddr || v === bcastAddr) continue;
     if (excluded.indexOf(v) >= 0) continue;
     if (used[v]) continue;
     var ip = intToIp(v);
