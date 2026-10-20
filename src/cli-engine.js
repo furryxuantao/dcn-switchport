@@ -830,7 +830,9 @@ function execLine(ctx, rawLine) {
     }
     // enable password 0|7 xxx（支持 enab passw）
     if (toks.length === 4 && matchPattern([toks[0]], ["enable"]) && matchPattern([toks[1]], ["password"]) && (toks[2] === "0" || toks[2] === "7")) {
-      dev.enablePassword = toks[3]; return { output: "", prompt: promptFor(dev, sess) };
+      dev.enablePassword = toks[3];
+    dev.enableEnc = toks[2];   // 0=明文 7=加密（仿真中仍存原文，但需记录类型）
+    return { output: "", prompt: promptFor(dev, sess) };
     }
     // language
     if (toks.length === 2 && matchPattern([toks[0]], ["language"]) && ("chinese".indexOf(toks[1].toLowerCase()) === 0 || "english".indexOf(toks[1].toLowerCase()) === 0)) {
