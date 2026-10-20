@@ -527,7 +527,175 @@ function connectedNets(dev) {
   }
   return nets;
 }
-function buildRouteTable(dev, allDevices, links) {
+// 求设备 d 朝 peer 方向的三层出口 IP（用于动态路由通告的下一跳）
+function egressIpToward(d, links, allDevices, peerId) {
+  var dl = directLinkBetween(allDevices, links, d, peerId ? devById(allDevices, peerId) : null);
+  if (!dl) return null;
+  var p = d.ports && d.ports[dl.myPort];
+  if (!p) return null;
+  // 路由器：直接用该物理口的 IP
+  if (d.type === "router") {
+    var cfg = d.ifIp && d.ifIp[dl.myPort];
+    return cfg && cfg.ip ? cfg.ip : null;
+  }
+  // 三层交换机：找该口所属 VLAN，用对应 SVI 的 IP
+  var vlan = null;
+  if (p.mode === "access") vlan = p.accessVlan || 1;
+  else {
+    // trunk 口：取该链路上对端所在的 vlan（用 access 端推断）
+    var peer = dl.peerPort ? (d.ports[dl.peerPort] || null) : null;
+    if (peer && peer.mode === "access") vlan = peer.accessVlan || 1;
+  }
+  if (vlan !== null && d.vlanIf && d.vlanIf[String(vlan)]) {
+    return d.vlanIf[String(vlan)].ip || null;
+  }
+  return null;
+}
+// ---------- 动态路由：距离向量迭代 ----------
+// 返回 { devId: { "net/mask": {dist, nextHop, proto, port} } }
+var _dvCache = { key: null, val: null };
+function computeDynamicRoutes(allDevices, links) {
+  // 同一组拓扑只算一次：buildRouteTable 会被每个设备各调一次
+  // 注意：key 必须包含各设备的协议配置，否则「先算表、后配协议」时会命中过期缓存
+  var ck = allDevices.length + "|" + links.length + "|" +
+    allDevices.map(function (d) {
+      var rip = d.rip || {}, ospf = d.ospf || {};
+      return d.id + ":" +
+        (rip.enabled ? 1 : 0) + (rip.version || 0) +
+        (rip.networks || []).map(function (n) { return typeof n === "string" ? n : (n.net || ""); }).join(",") +
+        Object.keys(rip.enabledIfs || {}).sort().join(",") +
+        (ospf.enabled ? 1 : 0) +
+        (ospf.networks || []).map(function (n) { return n.net || ""; }).join(",");
+    }).join("|");
+  if (_dvCache.key === ck) return _dvCache.val;
+  var tables = {};
+  allDevices.forEach(function (d) { tables[d.id] = {}; });
+  // 1) 初始化直连路由（dist=0）
+  allDevices.forEach(function (d) {
+    connectedNets(d).forEach(function (n) {
+      tables[d.id][n.net + "/" + n.mask] = {
+        dist: 0, nextHop: null, proto: "C", port: n.port, ip: n.ip
+      };
+    });
+  });
+  // 2) 收集每个设备的协议宣告（它自己宣告哪些网段）
+  //    rip：network 列表 + （按接口使能时）自己直连的所有网段
+  //    ospf：network 列表
+  function advNetsOf(d) {
+    var rip = d.rip || {};
+    var ospf = d.ospf || {};
+    var ripOn = !!(rip.enabled && ((rip.networks || []).length || Object.keys(rip.enabledIfs || {}).length));
+    var ospfOn = !!(ospf.enabled && (ospf.networks || []).length);
+    var rips = [], ospfs = [];
+    if (ripOn) {
+      (rip.networks || []).forEach(function (nw) {
+        if (typeof nw === "string") { rips.push({ net: nw, mask: "255.255.255.0" }); return; }
+        if (!nw.net) return;
+        rips.push({ net: nw.net, mask: nw.mask || "255.255.255.0" });
+      });
+      // 按接口使能（ip rip N enable）时通告自己直连的所有网段
+      if (!rips.length) {
+        connectedNets(d).forEach(function (cn) {
+          rips.push({ net: cn.net, mask: cn.mask });
+        });
+      }
+    }
+    if (ospfOn) {
+      (ospf.networks || []).forEach(function (nw) {
+        if (!nw.net) return;
+        ospfs.push({ net: nw.net, mask: nw.mask || "255.255.255.0" });
+      });
+      if (!ospfs.length) {
+        connectedNets(d).forEach(function (cn) {
+          ospfs.push({ net: cn.net, mask: cn.mask });
+        });
+      }
+    }
+    return { rip: rips, ospf: ospfs };
+  }
+  // 3) 预计算邻接表（把每轮 O(N²×links) 降为 O(N²)）
+  var nbMap = {};
+  links.forEach(function (l) {
+    var a = devById(allDevices, l.a.dev), b = devById(allDevices, l.b.dev);
+    if (!a || !b) return;
+    if (!nbMap[a.id]) nbMap[a.id] = [];
+    if (!nbMap[b.id]) nbMap[b.id] = [];
+    nbMap[a.id].push({ id: b.id, myPort: l.a.port, peerPort: l.b.port });
+    nbMap[b.id].push({ id: a.id, myPort: l.b.port, peerPort: l.a.port });
+  });
+  // 4) 迭代收敛
+  for (var iter = 0; iter < 16; iter++) {
+    var changed = false;
+    // 每轮用「上一轮的表」生成通告
+    var advs = {};
+    allDevices.forEach(function (d) {
+      var list = [];
+      var an = advNetsOf(d);
+      // (a) 自己宣告的网段：dist 0，下一跳 = 通告接口的 IP
+      ["rip", "ospf"].forEach(function (kind) {
+        var proto = kind === "rip" ? "R" : "O";
+        (an[kind] || []).forEach(function (nw) {
+          var local = null;
+          connectedNets(d).forEach(function (cn) {
+            if (cn.net === nw.net && (!nw.mask || cn.mask === nw.mask)) local = cn;
+          });
+          if (local) list.push({ net: nw.net, mask: nw.mask, dist: 0, nextHop: local.ip, proto: proto });
+        });
+      });
+      // (b) 学到的路由：原样通告（下一跳不变），距离 +1 由接收方计算
+      var own = tables[d.id];
+      Object.keys(own).forEach(function (k) {
+        var r = own[k];
+        if (r.dist === 0) return;          // 直连的已在上面处理
+        list.push({ net: r.dest || k.split("/")[0], mask: r.mask || k.split("/")[1],
+          dist: r.dist, nextHop: r.nextHop, proto: r.proto, learned: true });
+      });
+      advs[d.id] = list;
+    });
+    // 接收：邻居的通告
+    allDevices.forEach(function (nb) {
+      (nbMap[nb.id] || []).forEach(function (dl) {
+        var d = devById(allDevices, dl.id);
+        if (!d) return;
+        var advList = advs[d.id] || [];
+        if (!advList.length) return;
+        // 该邻居是否在朝我的这个接口上宣告（按协议分别判断）
+        var kinds = [];
+        advList.forEach(function (a) {
+          if (kinds.indexOf(a.proto) < 0) kinds.push(a.proto);
+        });
+        var allowed = false;
+        for (var ki = 0; ki < kinds.length; ki++) {
+          var kd = kinds[ki] === "R" ? "rip" : "ospf";
+          if (peerAdvertisesOn(nb, d, dl.peerPort, kd)) { allowed = true; break; }
+        }
+        if (!allowed) return;
+        advList.forEach(function (a) {
+          var key = a.net + "/" + a.mask;
+          var nd = a.dist + 1;
+          if (nd > 16) return;
+          var ex = tables[nb.id][key];
+          // 只在更优时更新 → 天然避免「下一跳指回自己」的环路
+          if (!ex || nd < ex.dist) {
+            // 下一跳 = 通告者朝我方向的三层出口 IP
+            var nh = egressIpToward(d, links, allDevices, nb.id) || a.nextHop;
+            if (!nh) return;
+            tables[nb.id][key] = {
+              dist: nd, nextHop: nh, proto: a.proto,
+              port: dl.myPort, net: a.net, mask: a.mask
+            };
+            changed = true;
+          }
+        });
+      });
+    });
+    if (!changed) break;
+  }
+  _dvCache = { key: ck, val: tables };
+  return tables;
+}
+function buildRouteTable(dev, allDevices, links, depth) {
+  depth = depth || 0;
   // 返回 [{proto:'C'|'S'|'R'|'O'|'S*', dest, mask, nextHop, port, dist}]
   var table = [];
   connectedNets(dev).forEach(function (n) {
@@ -538,44 +706,22 @@ function buildRouteTable(dev, allDevices, links) {
     if (!r || !r.dest || !r.mask) return;
     table.push({ proto: r.dest === "0.0.0.0" ? "S*" : "S", dest: r.dest, mask: r.mask, nextHop: r.nextHop, port: "-", dist: r.dist || 1 });
   });
-  // RIP/ OSPF 学习：若全网拓扑物理连通且协议配置正确，则学习到远端直连网段
-  // 协议字段防御：非 createDevice 构造的对象可能没有 rip/ospf 字段
-  var _rip = dev.rip || { enabled: false, enabledIfs: {}, networks: [] };
-  var _ospf = dev.ospf || { enabled: false, networks: [] };
-  var ripOn = dev.type === "router" ? (_rip.enabled && Object.keys(_rip.enabledIfs || {}).length > 0) :
-    dev.type === "l3" ? (_rip.enabled && (_rip.networks || []).length > 0) : false;
-  var ospfOn = !!(_ospf.enabled && (_ospf.networks || []).length > 0);
-  if (ripOn || ospfOn) {
-    // 简化：学习所有其他设备的直连网段（假设 area 0 / version 2 / auto-summary 正确）
-    allDevices.forEach(function (other) {
-      if (other.id === dev.id) return;
-      // 对端也必须真正跑起协议：路由器至少一个口使能 RIP 或宣告了 OSPF；三层需 network 已配
-      var oRip = other.rip || { enabled: false, enabledIfs: {}, networks: [] };
-      var oOspf = other.ospf || { enabled: false, networks: [] };
-      var otherRip = (other.type === "router")
-        ? (oRip.enabled && Object.keys(oRip.enabledIfs || {}).length > 0)
-        : (other.type === "l3" ? (oRip.enabled && (oRip.networks || []).length > 0) : false);
-      var otherOspf = (other.type === "router" || other.type === "l3")
-        ? (oOspf.enabled && (oOspf.networks || []).length > 0) : false;
-      var otherOn = otherRip || otherOspf;
-      // 三层交换机的vlan网段需要宣告才被学习；简化要求双方都开协议
-      if (!otherOn && other.type !== "pc") {
-        // 若本端OSPF/RIP开但对端没开，仍可通过静态学到？按实验要求：必须都开才通
-        // 这里要求至少本端开且物理连通才学习，但为了体现"没配RIP就不通"，要求对端同协议也开
-        return;
-      }
-      connectedNets(other).forEach(function (n) {
-        // 本地已有则跳过
-        var exists = table.some(function (t) { return t.dest === n.net && t.mask === n.mask; });
-        if (exists) return;
-        // 下一跳：沿最短设备路径找第一跳邻居及其共享网段 IP
-        var nh = l3NextHop(dev, other, allDevices, links);
-        if (!nh) return; // 拥有者不可达则不学
-        table.push({ proto: ripOn && !ospfOn ? "R" : "O", dest: n.net, mask: n.mask, nextHop: nh.ip, port: nh.port, dist: ripOn && !ospfOn ? 120 : 110 });
-      });
+  // ---- 动态路由（RIP/OSPF）：查距离向量表 ----
+  // 距离向量表由 computeDynamicRoutes 迭代计算，已处理：
+  //   · 按接口判断是否收到对方通告
+  //   · 只在距离更优时更新 → 天然避免「下一跳指回自己」的环路
+  //   · 课程实验 15/16 期望的「路由器之间传递路由」
+  var _dv = computeDynamicRoutes(allDevices, links);
+  var _dvSelf = _dv[dev.id] || {};
+  Object.keys(_dvSelf).forEach(function (key) {
+    var r = _dvSelf[key];
+    if (!r || r.dist === 0) return;          // 直连路由前面已加过
+    if (table.some(function (t) { return t.dest === r.net && t.mask === r.mask; })) return;
+    table.push({
+      proto: r.proto, dest: r.net, mask: r.mask,
+      nextHop: r.nextHop, port: r.port, dist: r.dist
     });
-    // PC网段经由L3 vlan口：若L3开了rip且network包含，则R学习（上面已通过connectedNets of L3覆盖）
-  }
+  });
   // 最长掩码优先排序由查找函数处理
   return table;
 }
@@ -737,6 +883,61 @@ function linkOperUp(allDevices, link, stpInfo) {
 }
 
 // 核心：从srcDev ping dstIp，BFS跨L2/L3，返回 {ok, path:[{dev,via,ip}], reason}
+// 找出 dev 与 other 之间的直连链路（返回 {link, myPort, peerPort}）
+function directLinkBetween(allDevices, links, dev, other) {
+  for (var i = 0; i < links.length; i++) {
+    var l = links[i];
+    var a = devById(allDevices, l.a.dev), b = devById(allDevices, l.b.dev);
+    if (!a || !b) continue;
+    if (a.id === dev.id && b.id === other.id) return { link: l, myPort: l.a.port, peerPort: l.b.port };
+    if (b.id === dev.id && a.id === other.id) return { link: l, myPort: l.b.port, peerPort: l.a.port };
+  }
+  return null;
+}
+// 对方是否在「朝我的这个接口」上启用了指定协议
+function peerAdvertisesOn(dev, other, peerPort, proto) {
+  if (proto === "rip") {
+    var rip = other.rip || {};
+    if (!rip.enabled) return false;
+    var ifs = rip.enabledIfs || {};
+    if (Object.keys(ifs).length) return !!ifs[peerPort];   // 路由器：按接口使能
+    return (rip.networks || []).length > 0;                // 三层交换机：按 network 宣告
+  }
+  if (proto === "ospf") {
+    var ospf = other.ospf || {};
+    if (!ospf.enabled) return false;
+    var nets = ospf.networks || [];
+    if (!nets.length) return false;
+    var p = other.ports && other.ports[peerPort];
+    if (!p) return false;
+    var net = null;
+    // 三层物理口：用该口 IP 所属网段
+    var cfg = other.ifIp && other.ifIp[peerPort];
+    if (cfg && cfg.ip) net = networkOf(cfg.ip, cfg.mask);
+    // 三层交换机的二层口：用该口所属 VLAN 的 SVI 网段
+    if (net === null && other.type === "l3") {
+      var vid = p.mode === "access" ? (p.accessVlan || 1) : null;
+      if (vid !== null && other.vlanIf && other.vlanIf[String(vid)]) {
+        net = networkOf(other.vlanIf[String(vid)].ip, other.vlanIf[String(vid)].mask);
+      }
+    }
+    if (net === null) {
+      // 仍无法确定（如 trunk 口）：只要该设备有宣告就用直连网段兜底
+      var cn = connectedNets(other);
+      for (var ci = 0; ci < cn.length; ci++) {
+        for (var ni = 0; ni < nets.length; ni++) {
+          if (nets[ni].net === cn[ci].net) return true;
+        }
+      }
+      return false;
+    }
+    for (var i = 0; i < nets.length; i++) {
+      if (nets[i].net === net) return true;
+    }
+    return false;
+  }
+  return false;
+}
 // ================= ACL 访问控制列表 =================
 // 规则结构：{seq, action:'permit'|'deny', proto:'ip'|'tcp'|'udp'|'any',
 //            src, dst, ports, vlan, log}
@@ -1213,11 +1414,25 @@ function diagnoseFail(allDevices, links, srcDev, dstIp, stpInfo) {
     }
     return "目标不可达（目标IP不存在或无路由）";
   }
-  // PC 互 ping 失败且分属不同 vlan：直接点名
+  // PC 互 ping 失败且分属不同 vlan：
+  // 只有在「不经三层转发」时才真的不通 —— 若源 PC 的网关能路由到目标，
+  // 说明存在三层路径，VLAN 不同并不是障碍（实验 15/16 即属此类）
   if (target.type === "pc") {
     var sv = edgeVlan(srcDev, allDevices, links), tv = edgeVlan(target, allDevices, links);
-    if (sv !== null && tv !== null && sv !== "trunk" && tv !== "trunk" && sv !== tv)
-      return "VLAN不一致（源vlan" + sv + "，目标vlan" + tv + "）：需同VLAN同网段";
+    if (sv !== null && tv !== null && sv !== "trunk" && tv !== "trunk" && sv !== tv) {
+      var viaL3 = false;
+      var gwIp = (srcDev.type === "pc") ? srcDev.pcGw : null;
+      if (gwIp) {
+        var gwDev = findDeviceByIp(allDevices, gwIp);
+        if (gwDev) {
+          var rtGw = routeLookup(gwDev, dstIp, allDevices, links);
+          if (rtGw) viaL3 = true;
+        }
+      }
+      if (!viaL3) {
+        return "VLAN不一致（源vlan" + sv + "，目标vlan" + tv + "）：需同VLAN同网段";
+      }
+    }
   }
   // 路由器/L3 源 ping 失败：先看路由表有没有到目标网段的条目
   if (srcDev.type === "router" || srcDev.type === "l3") {
@@ -1252,18 +1467,25 @@ function diagnoseFail(allDevices, links, srcDev, dstIp, stpInfo) {
   // 检查端口shutdown / 安全违例 / STP阻断
   var badPorts = [];
   // 串口未配 DCE 时钟导致链路 down（课程实验 12 的经典坑）
+  // 判定：某条串口链路上，两端都没有提供时钟 → 该链路 down
   var clockIssues = [];
   links.forEach(function (l) {
-    if (!(String(l.a.port).charAt(0) === "s" || String(l.b.port).charAt(0) === "s")) return;
-    [[devById(allDevices, l.a.dev), l.a.port], [devById(allDevices, l.b.dev), l.b.port]].forEach(function (pr) {
+    var aIsSer = String(l.a.port).charAt(0) === "s";
+    var bIsSer = String(l.b.port).charAt(0) === "s";
+    if (!aIsSer && !bIsSer) return;
+    var sides = [[devById(allDevices, l.a.dev), l.a.port], [devById(allDevices, l.b.dev), l.b.port]];
+    var anyClock = false, noClockSides = [];
+    sides.forEach(function (pr) {
       var d = pr[0], pn = pr[1];
       if (!d || d.type !== "router" || !pn) return;
       if (String(pn).charAt(0) !== "s") return;
       var cfg = d.ifIp[pn];
-      if (!cfg || !cfg.clock) {
-        clockIssues.push(d.hostname + ":" + pn);
-      }
+      if (cfg && cfg.clock) anyClock = true;
+      else noClockSides.push(d.hostname + ":" + pn);
     });
+    if (!anyClock && noClockSides.length) {
+      clockIssues.push(noClockSides.join(" 与 "));
+    }
   });
   if (clockIssues.length) {
     var uniqClock = [];

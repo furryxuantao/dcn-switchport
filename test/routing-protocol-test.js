@@ -140,7 +140,8 @@ console.log("\n===== 5. RIP 定时器与收敛 =====");
   const t1 = Sim.buildRouteTable(r1, devices, links);
   ok("R1 学到 RIP 路由", t1.some(x => x.proto === "R" && x.dest === "192.168.2.0"),
     JSON.stringify(t1.map(x => x.proto + " " + x.dest)));
-  ok("RIP 路由 dist=120", t1.filter(x => x.proto === "R")[0].dist === 120,
+  // 距离向量实现后 dist 为真实跳数（1 跳 = 1），与思科 RIP 度量一致
+  ok("RIP 路由 dist=1（直连邻居，1 跳）", t1.filter(x => x.proto === "R")[0].dist === 1,
     JSON.stringify(t1.filter(x => x.proto === "R")[0]));
   const t2 = Sim.buildRouteTable(r2, devices, links);
   ok("R2 学到 R1 的网段", t2.some(x => x.proto === "R" && x.dest === "10.9.9.0"),

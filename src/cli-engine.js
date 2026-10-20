@@ -1974,10 +1974,27 @@ function execLine(ctx, rawLine) {
     if (/^auto-summary$/i.test(line)) { dev.rip.autoSummary = true; return { output: "", prompt: promptFor(dev, sess) }; }
     if (/^no\s+auto-summary$/i.test(line)) { dev.rip.autoSummary = false; return { output: "", prompt: promptFor(dev, sess) }; }
     var nwm = line.match(/^network\s+vlan\s+(\d+)$/i);
-    if (nwm) { dev.rip.networks.push(nwm[1]); dev.rip.enabled = true; return { output: "", prompt: promptFor(dev, sess) }; }
+    if (nwm) {
+      // network vlan <id>：宣告该 VLAN 虚接口所在的网段（真机语义）
+      var vid2 = nwm[1];
+      var vc2 = dev.vlanIf && dev.vlanIf[vid2];
+      if (vc2 && vc2.ip) {
+        dev.rip.networks.push({ net: S().networkOf(vc2.ip, vc2.mask), mask: vc2.mask, vlan: vid2 });
+      } else {
+        // 虚接口还没配 IP：先记下 VLAN 号，配置 IP 后再解析
+        dev.rip.networks.push({ vlan: vid2 });
+      }
+      dev.rip.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     var nwm2 = line.match(/^network\s+(\S+)(\s+(\S+))?$/i);
     if (nwm2 && nwm2[1].toLowerCase() !== "vlan") {
-      dev.rip.networks.push(nwm2[1]); dev.rip.enabled = true;
+      var ripNet = nwm2[1], ripMask = nwm2[3] || "255.255.255.0";
+      if (S().ipToInt(ripNet) === null) {
+        return { output: "% network 格式如 network 10.1.0.0 255.255.255.0", prompt: promptFor(dev, sess) };
+      }
+      dev.rip.networks.push({ net: ripNet, mask: ripMask });
+      dev.rip.enabled = true;
       return { output: "", prompt: promptFor(dev, sess) };
     }
     var pi2 = line.match(/^passive-interface\s+(\S+)$/i);
