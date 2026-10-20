@@ -1,159 +1,183 @@
+## Digital China DCN Network Simulator v1.3.0
+
+A Packet Tracer-style network simulator for the "Digital China (神州数码) DCN" device family.
+All commands, prompts and parameter values follow the course PPT slides and laboratory reports verbatim.
+
+[中文说明](#中文说明)
+
+### Download
+
+- `DCN-Network-Simulator-1.3.0-portable.exe` — single-file portable build for Windows 64-bit
+
+The file requires no installation. On first launch it extracts to a temporary directory, which takes
+approximately 30 seconds; the application window appears only after extraction completes.
+The executable is not code-signed, therefore Windows SmartScreen may report an unknown publisher.
+Select "More info" → "Run anyway" to proceed.
+
+### Included features
+
+- **All 16 course laboratory scenarios**, each with step-by-step guidance and a one-click reference configuration.
+- **Complete DCN command set** with unique-prefix abbreviation (`conf t`, `int e1/0/1`, `swi mode acc`,
+  `sh run`), TAB completion, contextual `?` assistance and command history.
+- **Cisco-equivalent feature set**, implemented on top of the DCN device model: VTP, STP/MSTP
+  enhancements (PortFast, BPDU Guard, BPDU Filter, Root Guard), EtherChannel load balancing,
+  secondary addresses, DHCP relay, proxy ARP, AAA with TACACS+/RADIUS/SNMPv3, route maps, UDLD and 802.1X.
+- **Enterprise layer-2 security**: DHCP snooping, IGMP snooping, dynamic ARP inspection, port isolation,
+  QoS priority and loop guard.
+- **Layer-3 capability**: standard and extended ACL, VRRP, NAT, static and default routes, RIP and
+  multi-area OSPF.
+- **Realistic behaviour**: per-path latency model, broadcast storm simulation, port mirroring,
+  link aggregation and terminal-based port security.
+
+### Corrections made in this release
+
+The following defects were identified and resolved. Each item affected observable behaviour in the
+laboratory exercises.
+
+1. **Spanning tree failed to block redundant paths in rings of three or more switches.** The previous
+   implementation only resolved parallel links between the same pair of switches; a ring spanning three
+   switches left every port in the forwarding state. STP has been rewritten as a standard spanning-tree
+   construction: breadth-first search from the root bridge, root ports oriented towards the root, and
+   redundant links blocked at the end furthest from the root. This restores laboratory 10 (STP/MSTP).
+
+2. **The MAC address table was never populated through frame forwarding.** The learning routine was
+   defined and exported but never invoked on the forwarding path, so `show mac-address-table` remained
+   empty and the forwarding behaviour described in laboratory 2 could not be reproduced. Source MAC
+   addresses are now learned on ingress, and the forwarding decision follows the standard
+   known-unicast/unknown-multicast model.
+
+3. **Access control lists had no effect on routers.** Evaluation was implemented only on the layer-2
+   path, leaving ACLs on routers — the primary deployment scenario — without effect. Layer-3
+   ingress evaluation has been added.
+
+4. **Layer-3 switches could not forward at layer 2 without an SVI address.** A layer-3 switch
+   without a matching route discarded frames instead of forwarding them within the VLAN broadcast
+   domain. Forwarding now falls back to layer 2 when no layer-3 route applies.
+
+5. **Dynamic routing did not satisfy laboratory 15 (RIP) and laboratory 16 (OSPF).** The previous
+   implementation learned every directly connected subnet of every neighbour, without regard to the
+   interface on which an advertisement was received and without propagating learned routes. Routing
+   has been rewritten as a standard distance-vector computation: advertisements are evaluated per
+   interface, routes are accepted only when the distance improves, and learned routes are propagated
+   between routers. The propagation follows the procedure prescribed in the laboratory 15 report.
+
+6. **Port security never detected a violation.** The previous condition did not compare the number of
+   learned addresses against the configured maximum. Detection has been reimplemented, supporting the
+   `shutdown`, `protect` and `restrict` violation modes.
+
+7. **The user interface corrupted the MAC address table.** Two code paths recorded the source MAC
+   address against the first port of every switch, regardless of the actual connection. Entries
+   therefore pointed to incorrect ports and unidirectional communication failed.
+
+8. **Port speed, UDLD and 802.1X were configurable but had no effect.** Speed now influences path
+   latency, UDLD renders a link unusable when the configured rates or duplex settings disagree across
+   the link, and 802.1X blocks traffic on ports that have not completed authentication.
+
+9. **The `ip address` abbreviation never matched the full keyword.** The pattern `add(?:r|ess)?`
+   does not backtrack and therefore matched only `addr`, so an IP address could not be assigned to a
+   physical router interface.
+
+10. **A missing DCE clock on a serial link was reported as a VLAN or routing misconfiguration.**
+    The diagnostic now identifies the affected interfaces and states that one end must provide the
+    clock via `physical-layer speed 64000`.
+
+11. **Laboratory 12 targeted an incorrect interface.** The second task referenced R2-G0/0, which the
+    layer-3 switch reaches by routing and which is therefore reachable, contradicting the stated
+    objective. The target has been changed to R2-S1/1 in accordance with the laboratory report.
+
+### Verification
+
+The automated test suite comprises 1250 assertions covering end-to-end verification of all 16
+laboratory scenarios, CLI command auditing, forwarding-path behaviour, boundary and malformed
+input handling, user interface interaction and index consistency, and routing protocol correctness.
+All assertions pass.
+
+### Project
+
+Source code, issue tracker and additional documentation:
+<https://github.com/furryxuantao/dcn-switchport>
+
+### Iconography
+
+Interface icons are derived from [Lucide](https://lucide.dev) (ISC License).
+
+---
+
+<a name="中文说明"></a>
+
 ## 神州数码 DCN 网络模拟器 v1.3.0
 
-对标思科 Packet Tracer 的网络实验模拟器，命令与提示符严格对照本课程 PPT 与实验报告。
+面向神州数码 DCN 设备系列的网络实验模拟器，交互形态参照思科 Packet Tracer。
+全部命令、提示符与参数取值严格对照本课程 PPT 与实验报告。
 
 ### 下载
-- `DCN-Simulator-1.3.0-portable.exe` — 绿色单文件版，Windows 64 位，双击即用，无需安装
 
-> 首次运行需解压约 30 秒（单文件 exe 会自解压到临时目录），窗口不会立刻出现属正常现象。
-> 未做代码签名，Windows SmartScreen 可能提示"未知发布者"，选择"仍要运行"即可。
+- `DCN-Network-Simulator-1.3.0-portable.exe` — Windows 64 位单文件绿色版
 
-### 功能
-- **16 个课程实验**一键载入：交换机初始配置 / 以太网原理 / 端口安全 / VLAN / 三层交换 /
-  Telnet / SSH / 链路聚合 / 端口镜像 / STP / MSTP / 路由技术 / 路由器 IP / 静态路由 /
-  默认路由 / RIP / OSPF
-- **完整 DCN 命令集**：支持命令缩写（每个单词只输唯一前缀，如 `conf t`、`int e1/0/1`、
-  `swi mode acc`、`sh run`）、TAB 补全、`?` 联想、历史记录
-- **思科式连线**：选线型 → 点源设备选端口 → 点目标设备选端口，支持直通线/交叉线/光纤/
-  Console/DCE/DTE 串口
-- **真实链路延迟**：ping 采用 Windows 风格输出，逐包浮现，含最短/最长/平均与丢包统计
-- **广播风暴模拟**：二层成环且未开启生成树时通信阻断，开启 `spanning-tree` 后恢复
-- **一键标准答案**：按实验报告参数表自动配置，可直接验证 ping 是否通
-- **企业级进阶特性**（神州数码 DCS 真机常见，均可用 show 验证）：
-  - DHCP Snooping 防欺骗（`ip dhcp snooping`、接口下 `ip dhcp snooping trust`）
-  - IGMP Snooping 组播抑制（`ip igmp snooping`）
-  - 动态 ARP 检测 DAI（`ip arp inspection vlan <列表>`）
-  - 端口隔离（`switchport isolate group <n>`）—— **真实阻断通信**，ping 会报「端口隔离阻断」
-  - QoS 优先级 802.1p（`switchport priority <0-7>`）
-  - 环路保护（`switchport loop-guard enable`、`loop-guard enable`）
-  - 静态 MAC 绑定 / MAC 表上限 / 老化时间（`mac-address static`/`maximum`/`aging-time`）
-  - LLDP 邻居发现、SNMP Agent、端口限速、`debug mirror`
-- **ACL 访问控制列表**：`ip access-list extended <编号>` → `seq <n> permit|deny <协议> <源> <目的> [eq 端口] [log]`，
-  接口下 `ip access-group <编号> in` 应用。**命中 deny 会真实阻断流量**（地址用反掩码，与真机一致）
-- **VRRP 网关冗余**：接口下 `vrrp <组号> ip <虚IP>`、`vrrp <组号> priority <1-254>`，
-  按优先级自动选举 Master，`show vrrp` 查看
-- **DHCP 服务器**：`service dhcp`、`ip dhcp pool <名>`（network / default-router / dns-server /
-  lease / range）、`ip dhcp excluded-address`，`show ip dhcp pool` 与 `show ip dhcp binding`
+无需安装。首次启动时解压至临时目录，耗时约 30 秒，窗口在解压完成后才会出现。
+程序未做代码签名，Windows SmartScreen 可能提示"未知发布者"，请选择"更多信息"→"仍要运行"。
 
-### 思科对标增强（设备仍为神州数码 DCS）
+### 功能范围
 
-除课程命令外，补充了思科 IOS 上企业网常用的功能，命令语法对齐思科：
+- **16 个课程实验**全部内置，每个实验均提供分步指导与一键标准答案。
+- **完整 DCN 命令集**，支持唯一前缀缩写（`conf t`、`int e1/0/1`、`swi mode acc`、`sh run`）、
+  TAB 补全、上下文 `?` 提示与命令历史。
+- **思科对标能力**，均基于 DCN 设备模型实现：VTP、生成树增强（PortFast、BPDU Guard、
+  BPDU Filter、Root Guard）、链路聚合负载分担、辅助地址、DHCP 中继、代理 ARP、
+  AAA（TACACS+/RADIUS/SNMPv3）、路由映射、UDLD、802.1X。
+- **企业级二层安全**：DHCP Snooping、IGMP Snooping、动态 ARP 检测、端口隔离、QoS 优先级、环路保护。
+- **三层能力**：标准与扩展 ACL、VRRP、NAT、静态路由与默认路由、RIP、多区域 OSPF。
+- **行为仿真**：按路径长度计算链路时延、广播风暴模拟、端口镜像、链路聚合、终端侧端口安全。
 
-**二层**
-- VTP 集中管理 VLAN：`vtp mode server|client|transparent`、`vtp domain`、`vtp version`、`vtp pruning`
-- 生成树保护：PortFast / BPDU Guard / BPDU Filter / Root Guard、生成树计时器
-- 聚合负载分担：`port-group N load-balance <算法>`、`min-links`
-- 端口属性：`speed` / `duplex` / `negotiation` / `description` / `storm-control` / `udld` / `dot1x`
-- 新增 `show vtp`、`show spanning-tree detail`、`show etherchannel summary`、`show interfaces status/trunk`
+### 本版修复的问题
 
-**三层**
-- 辅助地址 `ip address <IP> <掩码> secondary`、DHCP 中继 `ip helper-address`、代理 ARP `proxy arp`
-- RIP 增强：计时器 / poison-reverse / split-horizon / default-information originate
-- OSPF 增强：auto-cost reference-bandwidth / log-adjacency-changes / default-information originate
-- 新增 `show ip interface` / `ip helper` / `ip proxy-arp` / `ip rip` / `ip ospf`
+以下缺陷均已在实际实验场景中产生可观察影响，逐项修复如下。
 
-**NAT / 策略路由 / 环路检测**
-- NAT：`ip nat inside|outside`、`ip nat pool`、`ip nat overload`、`ip nat inside source list <ACL>`，
-  **真实转换**并维护转换表（`show ip nat`）
-- 策略路由：`route-map` → `match` / `set`（`show route-map`）
-- 二层环路检测：`loop-detect enable`，MAC 反复漂移即告警并中断转发（`show loop-detect`）
+1. **生成树无法阻断三台及以上交换机构成的环路。** 原实现仅能处理同一对设备之间的并行链路，
+   三台交换机成环时全部端口保持转发状态，实验 10（STP/MSTP）的核心场景无法复现。
+   已重写为标准生成树构建：从根桥广度优先搜索，根端口朝向根桥，冗余链路在远离根桥的一端阻断。
 
-**设备管理与运维**
-- `show version` / `show device-info`
-- 日志 `logging host|trap`、时钟 `clock timezone`、NTP `ntp server`
-- AAA `aaa new-model`、TACACS+/RADIUS 服务器、SNMPv3 用户
-- 用户特权级 `username <名> privilege <0-15>`、`banner motd`、`config-register`、
-  `service password-recovery`、`history size`
+2. **MAC 地址表在转发过程中从不学习。** 学习函数虽已定义并导出，但转发路径从未调用，
+   `show mac-address-table` 始终为空，实验 2 描述的转发行为无法演示。
+   现已在入端口学习源 MAC，转发决策按"已知单播优先、未知泛洪"的标准模型执行。
 
-### 本地运行（无需 exe）
-直接用浏览器打开 `index.html` 即可，无需安装任何依赖。
+3. **访问控制列表在路由器上不生效。** 判定逻辑仅实现在二层路径，而路由器上的 ACL 才是主要用途。
+   已补充三层入向判定。
 
-### 目录结构
-```
-index.html          入口
-styles.css          Claude 风格暖纸主题
-src/sim-core.js     转发/VLAN/STP/路由/延迟/风暴 仿真核心
-src/cli-engine.js   DCN 命令解析与执行
-src/labs.js         16 个实验预设
-src/ui.js           界面与交互
-src/icons.js        图标映射（Lucide, ISC License）
-test/               自动化测试（1095 项）
-electron/           Electron 打包配置
-```
+4. **三层交换机未配置虚接口 IP 时二层转发亦中断。** 无匹配路由时设备直接丢弃报文，
+   而真机仍应按 VLAN 广播域转发。现改为无三层路由时回退至二层转发。
 
-### v1.3.0 修复的问题
+5. **动态路由不满足实验 15（RIP）与实验 16（OSPF）的要求。** 原实现会学习每个邻居的全部直连网段，
+   既不区分接收通告的接口，也不传递已学到的路由。已重写为标准距离向量计算：按接口判定通告来源，
+   仅在距离更优时接受路由，并在路由器之间传递已学路由，传递方式依实验 15 报告所载流程执行。
 
-**核心算法**
-- **STP 无法处理多台交换机成环** —— 原实现只会阻塞「同一对交换机之间的并行链路」，
-  三台及以上交换机构成的环路完全不会阻塞，导致课程实验 10（STP/MSTP）的核心场景失效。
-  已重写为标准生成树构建（BFS 建树 → 根端口朝根 FWD → 冗余边阻塞离根更远的一端）。
-  三台成环时只阻塞 1 个端口，其余 5 个 FWD。
-- **广播风暴检测有同样盲区** —— 改用 Union-Find 判环。
-- **MAC 地址表从不在转发时自动学习** —— `learnMac` 定义了、导出了，但转发路径从不调用，
-  `show mac-address-table` 永远为空，实验 2「以太网交换机工作原理」的核心行为缺失。
-  现已在入端口学习源 MAC，并接入「已知单播优先、未知泛洪」的真实交换机转发逻辑。
-- **UI 层污染 MAC 表** —— `doPing` 与 `animatePing` 各有一处把源 MAC 记到
-  「每台交换机的第一个口」的代码，导致表项指向错误端口，**反向通信不通**。
+6. **端口安全从未检出违例。** 原判定条件实际含义为"未配置静态 MAC 且 max≤0"才判违例，
+   从未校验已学习地址数量是否超出上限。已重新实现，支持 `shutdown`、`protect`、`restrict` 三种处置方式。
 
-**端口安全**
-- 旧判定条件实际含义是「没配静态 MAC 且 max≤0」才违例，**从未检查 MAC 数量超上限**。
-  已重写为仿真核心实现，并支持 `violation shutdown|protect|restrict` 三种动作。
+7. **用户界面污染 MAC 地址表。** 两处代码将源 MAC 记录到每台交换机的第一个端口，
+   与实际连线无关，导致表项指向错误端口，单向通信中断。
 
-**诊断准确性**
-- 串口未配 DCE 时钟导致链路 down 时，此前被误报为「VLAN/网关/路由配置不匹配」，
-  现在明确提示「串口时钟未配置：R1:s1/0 —— 需要其中一端提供 DCE 时钟」。
-- MAC 表指向错误端口时明确报「MAC 地址表错误：…记在 e1/0/1，但该口连接的是…」。
+8. **端口速率、UDLD 与 802.1X 虽可配置却不影响转发。** 现端口速率参与时延计算；
+   UDLD 在链路两端速率或双工不一致时判定链路不可用；802.1X 在端口未完成认证时阻断业务。
 
-**其它**
-- `ip address` 的缩写正则 `add(?:r|ess)?` 对 "address" 不回溯，导致
-  **路由器物理口上配 IP 一直失败**（课程实验走 vlan 接口路径侥幸可用）。
-- 延迟模型的跳数只统计「源设备直连的链路数」，与实际路径长度无关。
-- `enable password` 未记录加密类型（0=明文 / 7=加密）。
-- MSTP 配置模式下 `name <区域名>` 无任何处理。
-- `show ip route` 有默认路由时不显示「Gateway of last resort」。
-- ping 全超时时仍输出「来自 X 的回复」，应为「请求超时」。
+9. **`ip address` 缩写无法匹配完整关键字。** 模式 `add(?:r|ess)?` 不回溯，实际仅匹配到 `addr`，
+   导致路由器物理口始终无法配置 IP 地址。
 
-### v1.2.0 修复的问题
-- **IP 换算精度丢失**：`192.168.10.0` 曾被算成 `192.168.0.0`（整数乘法超过 2^31 后精度丢失），
-  影响所有第三段 ≥ 8 的地址（DHCP 池、ACL 匹配、路由查找）
-- **广播地址计算优先级错误**：`|` 优先于 `>>>`，导致 DHCP 地址池分配到 `.254` 而非 `.1`
-- **PC 充当中继器**：转发路径中间的 PC 会把报文原路送回，
-  绕过端口隔离、ACL 等所有二层安全机制
-- **非法 IP 被判合法**：`1.1.1.1x` 会被 `parseInt` 宽松解析成 `1.1.1.1`
-- **`set default` 不重置主机名**
-- **模式切换残留状态**：`aclId` / `dhcpPool` 等在其它模式下未清理
-- **DHCP 分配了网络地址/广播地址**
-- `show spanning-tree` 在无生成树信息时崩溃
-- `interface e1/0/1,3,5` 只生效第一个口（逗号列表被截断）
-- `sh por-sec` 这类跨连字符缩写不识别
-- MAC 表上限、老化时间、静态 MAC 绑定此前只存不生效，现已真实生效
+10. **串口缺少 DCE 时钟被误报为 VLAN 或路由配置问题。** 现可准确指出涉及的接口，
+    并说明需由一端通过 `physical-layer speed 64000` 提供时钟。
 
-### 测试
-```powershell
-node src\run-tests.js          # CLI 引擎单测（23 项）
-node test\cmd-audit.js         # 命令审计（70 项）
-node test\enterprise-test.js   # 企业级新功能（121 项）
-node test\runtime-behavior-test.js  # 运行时行为（42 项）
-node test\edge-case-test.js    # 边界与异常输入（56 项）
-node test\advanced-feature-test.js  # ACL/VRRP/DHCP（78 项）
-node test\consistency-test.js  # 多特性组合（43 项）
-node test\factory-reset-test.js # 出厂重置完整性（22 项）
-node test\ip-math-test.js      # IP 换算与位运算（33 项）
-node test\cisco-parity-1-test.js # 思科对标：二层（83 项）
-node test\cisco-parity-2-test.js # 思科对标：三层（62 项）
-node test\cisco-parity-3-test.js # 思科对标：运维（72 项）
-node test\cisco-parity-4-test.js # 思科对标：NAT/PBR/环路（53 项）
-node test\cisco-parity-audit-test.js # 新增代码专项审计（20 项）
-node test\mac-portsecurity-test.js # MAC 学习与端口安全（45 项）
-node test\routing-protocol-test.js # MSTP/OSPF/RIP/静态路由（34 项）
-node test\auth-portsec-test.js  # 认证与端口安全链路（50 项）
-node test\ping-tracert-test.js  # ping/tracert 与延迟模型（36 项）
-node test\labs-integrity-test.js # 16 个实验完整性（31 项）
-node test\ui-regression-test.js # UI 回归（15 项）
-cd test; npm install; cd ..    # jsdom 依赖（仅页面测试需要）
-node test\answer-test.js       # 端到端（24 项）
-```
-共 1095 项自动化测试，全部通过。
+11. **实验 12 的验证目标选择有误。** 第二个任务原指向 R2-G0/0，该接口可经三层交换机的路由到达，
+    与任务文字所述的验证目的不符。已依据实验报告改为 R2-S1/1。
+
+### 验证
+
+自动化测试共 1250 项断言，覆盖 16 个实验的端到端验证、CLI 命令审计、转发路径行为、
+边界与异常输入处理、用户界面交互与索引一致性、路由协议正确性，全部通过。
+
+### 项目地址
+
+源码、问题反馈与补充文档：<https://github.com/furryxuantao/dcn-switchport>
 
 ### 图标许可
-[Lucide](https://lucide.dev) Icons，ISC License。
+
+界面图标取自 [Lucide](https://lucide.dev)，采用 ISC 许可协议。

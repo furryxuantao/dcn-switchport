@@ -1,6 +1,13 @@
 # 神州数码 DCN 网络模拟器（类 Packet Tracer）
 
+**Digital China DCN Network Simulator** — a Packet Tracer-style simulator for the DCN device family,
+with commands, prompts and parameter values aligned to the course PPT slides and laboratory reports.
+
+<img src="assets/icon.png" width="96" align="right" alt="应用图标 / Application icon">
+
 双击 `index.html` 即可使用，无需安装、无需联网。
+
+Windows 用户可下载绿色单文件版 `DCN-Network-Simulator-<版本>-portable.exe`。
 
 ## 对照课程（E:\network\神码搭建）
 | 实验 | 覆盖命令（神州数码 DCN / RGNOS） |
