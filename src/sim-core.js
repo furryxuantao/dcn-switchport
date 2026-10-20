@@ -381,20 +381,92 @@ function stpCompute(allDevices, links) {
       }
     });
   }
-  // 对每台非根，选到达根cost最小的端口为ROOT；每条交换机间链路选一端为DSGN，另一端若不是ROOT则BLK
-  // 简化：若两台交换机有多条并行链路（无聚合），只保留第一条FWD，其余BLK（形成环则阻断）
+  // 交换机之间的可用链路（每个网段 = 一条逻辑链路）
   var interLinks = links.filter(function (l) {
     var da = devById(allDevices, l.a.dev), db = devById(allDevices, l.b.dev);
     return da && db && switches.indexOf(da) >= 0 && switches.indexOf(db) >= 0 && linkUp(l);
   });
-  // 按 (dist远端) 排序决定阻塞
-  var seenPair = {};
-  interLinks.forEach(function (l, idx) {
+  // ---- 端口角色计算（标准生成树语义）----
+  // 1) 邻接表
+  var adj = {};
+  interLinks.forEach(function (l) {
     var da = devById(allDevices, l.a.dev), db = devById(allDevices, l.b.dev);
-    var key = [da.id, db.id].sort().join("|");
-    // 边缘口（PortFast / DTP edge）：接终端，不参与生成树选举，直接 FWD
+    if (!adj[da.id]) adj[da.id] = [];
+    if (!adj[db.id]) adj[db.id] = [];
+    adj[da.id].push({ to: db.id, link: l, port: l.a.port, peerPort: l.b.port });
+    adj[db.id].push({ to: da.id, link: l, port: l.b.port, peerPort: l.a.port });
+  });
+  // 2) 从根 BFS 建生成树：parentPort[子] = 子上朝根的端口
+  var parentPort = {};   // devId -> portName（该设备上朝根的端口）
+  var parentOf = {};    // devId -> 父设备 id
+  var treeEdge = {};    // linkId -> true
+  var visited = {};
+  visited[root.id] = true;
+  var bfs = [root.id];
+  var depth = {};
+  depth[root.id] = 0;
+  while (bfs.length) {
+    var u = bfs.shift();
+    (adj[u] || []).forEach(function (e) {
+      if (visited[e.to]) return;
+      visited[e.to] = true;
+      parentPort[e.to] = e.port;      // e.to 侧朝根的端口
+      parentOf[e.to] = u;
+      treeEdge[e.link.id] = true;
+      depth[e.to] = depth[u] + 1;
+      bfs.push(e.to);
+    });
+  }
+  // 4) 树边：父侧 DSGN/FWD（若父的根端口就是它则 ROOT/FWD），子侧 ROOT/FWD
+  interLinks.forEach(function (l) {
+    var da = devById(allDevices, l.a.dev), db = devById(allDevices, l.b.dev);
+    if (!treeEdge[l.id]) return;
+    var aIsParent = parentOf[db.id] === da.id;
+    var bIsParent = parentOf[da.id] === db.id;
+    if (aIsParent) {
+      roles[db.id + ":" + l.b.port] = { role: "ROOT", state: "FWD" };
+      roles[da.id + ":" + l.a.port] = (parentPort[da.id] === l.a.port)
+        ? { role: "ROOT", state: "FWD" } : { role: "DSGN", state: "FWD" };
+    } else if (bIsParent) {
+      roles[da.id + ":" + l.a.port] = { role: "ROOT", state: "FWD" };
+      roles[db.id + ":" + l.b.port] = (parentPort[db.id] === l.b.port)
+        ? { role: "ROOT", state: "FWD" } : { role: "DSGN", state: "FWD" };
+    }
+  });
+  // 5) 非树边（冗余边）：阻塞离根更远的一端；相等则按设备 ID 稳定选择
+  interLinks.forEach(function (l) {
+    var da = devById(allDevices, l.a.dev), db = devById(allDevices, l.b.dev);
+    if (treeEdge[l.id]) return;
+    // 链路聚合：同一 port-group 的多条物理线视为一条逻辑链路，不互相阻塞
+    var inAggA = da.ports[l.a.port] && da.ports[l.a.port].aggGroup;
+    var inAggB = db.ports[l.b.port] && db.ports[l.b.port].aggGroup;
+    if (inAggA && inAggA === inAggB && inAggA !== 0) {
+      roles[da.id + ":" + l.a.port] = { role: "DSGN", state: "FWD" };
+      roles[db.id + ":" + l.b.port] = { role: "DSGN", state: "FWD" };
+      return;
+    }
+    var aDepth = depth[da.id] === undefined ? 9999 : depth[da.id];
+    var bDepth = depth[db.id] === undefined ? 9999 : depth[db.id];
+    var aBlocked;
+    if (aDepth !== bDepth) aBlocked = aDepth > bDepth;
+    else aBlocked = da.id > db.id;
+    // 被阻塞的一端是 Alternate；另一端保持 DSGN/FWD
+    if (aBlocked) {
+      roles[da.id + ":" + l.a.port] = { role: "ALTR", state: "BLK" };
+      roles[db.id + ":" + l.b.port] = { role: "DSGN", state: "FWD" };
+    } else {
+      roles[da.id + ":" + l.a.port] = { role: "DSGN", state: "FWD" };
+      roles[db.id + ":" + l.b.port] = { role: "ALTR", state: "BLK" };
+    }
+  });
+  // 6) 根桥的所有交换机间端口都是 Designated
+  (adj[root.id] || []).forEach(function (e) {
+    if (!roles[root.id + ":" + e.port]) roles[root.id + ":" + e.port] = { role: "DSGN", state: "FWD" };
+  });
+  // 7) 特殊端口：边缘口 / 根守卫 / 未纳入生成树的设备
+  interLinks.forEach(function (l) {
+    var da = devById(allDevices, l.a.dev), db = devById(allDevices, l.b.dev);
     var edgeA = isEdgePort(da, l.a.port), edgeB = isEdgePort(db, l.b.port);
-    // 根守卫端口：拒绝成为根桥的路径，强制阻塞
     var guardA = isRootGuardPort(da, l.a.port), guardB = isRootGuardPort(db, l.b.port);
     if (guardA || guardB) {
       roles[da.id + ":" + l.a.port] = { role: "ALTR", state: "BLK" };
@@ -402,7 +474,6 @@ function stpCompute(allDevices, links) {
       return;
     }
     if (edgeA && edgeB) {
-      // 两端都是接入口：不应互联成环，视为已由 BPDU Guard 处理
       roles[da.id + ":" + l.a.port] = { role: "DSGN", state: "FWD" };
       roles[db.id + ":" + l.b.port] = { role: "DSGN", state: "FWD" };
       return;
@@ -411,49 +482,16 @@ function stpCompute(allDevices, links) {
       // 一端是接入口：接入口不参与阻塞，交换机侧按普通链路处理
       var swSide = edgeA ? db : da;
       var swPort = edgeA ? l.b.port : l.a.port;
-      roles[swSide.id + ":" + swPort] = { role: "DSGN", state: "FWD" };
       var pcSide = edgeA ? da : db;
       var pcPort = edgeA ? l.a.port : l.b.port;
+      roles[swSide.id + ":" + swPort] = { role: "DSGN", state: "FWD" };
       roles[pcSide.id + ":" + pcPort] = { role: "DSGN", state: "FWD" };
       return;
     }
-    // 若该pair已有一条FWD（且无聚合），其余阻塞
-    var inAggA = da.ports[l.a.port].aggGroup, inAggB = db.ports[l.b.port].aggGroup;
-    var aggregated = inAggA && inAggA === inAggB && inAggA !== 0;
-    // 检查同组聚合在对端一致才算聚合成功（简化：组号相同即聚合）
-    if (!aggregated && seenPair[key]) {
-      roles[da.id + ":" + l.a.port] = { role: "ALTR", state: "BLK" };
-      roles[db.id + ":" + l.b.port] = { role: "ALTR", state: "BLK" };
-    } else {
-      seenPair[key] = true;
-      // 粗略指定角色
-      if (da.id === root.id) {
-        roles[da.id + ":" + l.a.port] = { role: "DSGN", state: "FWD" };
-        roles[db.id + ":" + l.b.port] = { role: "ROOT", state: "FWD" };
-      } else if (db.id === root.id) {
-        roles[db.id + ":" + l.b.port] = { role: "DSGN", state: "FWD" };
-        roles[da.id + ":" + l.a.port] = { role: "ROOT", state: "FWD" };
-      } else {
-        // 距根近的一端为DSGN
-        if (dist[da.id] <= dist[db.id]) {
-          roles[da.id + ":" + l.a.port] = { role: "DSGN", state: "FWD" };
-          roles[db.id + ":" + l.b.port] = { role: "ROOT", state: "FWD" };
-        } else {
-          roles[db.id + ":" + l.b.port] = { role: "DSGN", state: "FWD" };
-          roles[da.id + ":" + l.a.port] = { role: "ROOT", state: "FWD" };
-        }
-      }
-    }
   });
-  // 交换机接PC的端口全部DSGN FWD
-  switches.forEach(function (d) {
-    Object.keys(d.ports).forEach(function (pn) {
-      var k = d.id + ":" + pn;
-      if (!roles[k]) roles[k] = { role: "DSGN", state: "FWD" };
-    });
-  });
-  return { rootId: root.id, root: root, dist: dist, roles: roles };
+  return { rootId: root.id, roles: roles };
 }
+
 function devById(list, id) {
   for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
   return null;
@@ -885,7 +923,7 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     };
   }
   // 目标是本机自己的IP
-  if (deviceIpList(srcDev).indexOf(dstIp) >= 0) return { ok: true, path: [{ dev: srcDev.hostname, ip: dstIp, via: "local" }], reason: "本机", latency: measurePing(allDevices, links, srcDev, dstIp, stpInfo) };
+  if (deviceIpList(srcDev).indexOf(dstIp) >= 0) return { ok: true, path: [{ dev: srcDev.hostname, ip: dstIp, via: "local" }], reason: "本机", latency: measurePing(allDevices, links, srcDev, dstIp, stpInfo, 1) };
   var visited = {}, queue = [];
   // 端口隔离索引：只有配置了隔离口的设备才需要按「入端口」细分 BFS 状态，
   // 否则退化为 devId|vlan 的快路径，保证大拓扑性能不受影响
@@ -932,7 +970,7 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     if (!dev) continue;
     // 到达目标IP？（入向已做 vlan/STP 门控；设备自身 IP 直接应答）
     if (deviceIpList(dev).indexOf(dstIp) >= 0) {
-      return { ok: true, path: cur.path, reason: "到达", latency: measurePing(allDevices, links, srcDev, dstIp, stpInfo) };
+      return { ok: true, path: cur.path, reason: "到达", latency: measurePing(allDevices, links, srcDev, dstIp, stpInfo, cur.path.length) };
     }
     if (dev.type === "pc") {
       // PC 是终端，不转发帧：只有「本机就是源」时才把报文注入它所接的 vlan 广播域。
@@ -1251,9 +1289,14 @@ function simulateTracert(allDevices, links, srcDev, dstIp) {
 // ---------- 广播风暴检测 ----------
 // 真实设备：二层出现环路且未启用生成树 → 广播风暴占满带宽 → 业务流量无法正常收发
 // 检测：交换机间存在两条及以上并行 up 链路（形成环），且相关交换机未开启 spanning-tree
+// 广播风暴检测：交换机互连图中存在环路，且环上没有生成树生效
+// （并行链路也算环，但若两端已配同一 port-group 则是链路聚合，真机不成环）
+// 广播风暴检测：交换机互连图中存在环路，且环上没有生成树生效
+// （并行链路也算环，但若两端已配同一 port-group 则是链路聚合，真机不成环）
 function detectStorm(allDevices, links, stpInfo) {
   stpInfo = stpInfo || stpCompute(allDevices, links);
-  var pairs = {};
+  // ---- 1) 取出交换机之间的可用以太网链路 ----
+  var swLinks = [];
   for (var i = 0; i < links.length; i++) {
     var l = links[i];
     if (l.serial) continue;
@@ -1263,35 +1306,61 @@ function detectStorm(allDevices, links, stpInfo) {
     var bSw = b.type === "l2" || b.type === "l3";
     if (!aSw || !bSw) continue;          // 只看交换机之间的以太网互联
     if (!linkOperUp(allDevices, l, stpInfo)) continue;
-    var k = [a.id, b.id].sort().join("|");
-    pairs[k] = (pairs[k] || 0) + 1;
+    swLinks.push(l);
   }
-  var keys = Object.keys(pairs);
-  for (var j = 0; j < keys.length; j++) {
-    if (pairs[keys[j]] < 2) continue;
-    var ids = keys[j].split("|");
-    var d1 = devById(allDevices, ids[0]), d2 = devById(allDevices, ids[1]);
-    if (!d1 || !d2) continue;
-    // 两端都没开生成树 → 风暴
-    if (d1.stp.enabled || d2.stp.enabled) continue;
-    // 例外：并行链路若已配置链路聚合（同一 port-group），真机不会形成环路
+  if (!swLinks.length) return false;
+  // ---- 2) Union-Find 判环：逐条加边，两端已连通则成环 ----
+  var parent = {};
+  function find(x) {
+    if (parent[x] === undefined) { parent[x] = x; return x; }
+    while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+    return x;
+  }
+  function union(x, y) {
+    var rx = find(x), ry = find(y);
+    if (rx === ry) return false;   // 已连通 → 加这条边就成环
+    parent[rx] = ry;
+    return true;
+  }
+  var cycleLinkIds = {};
+  for (var k = 0; k < swLinks.length; k++) {
+    var lk = swLinks[k];
+    var da = devById(allDevices, lk.a.dev), db = devById(allDevices, lk.b.dev);
+    if (!union(da.id, db.id)) cycleLinkIds[lk.id] = true;
+  }
+  var cycleIds = Object.keys(cycleLinkIds);
+  if (!cycleIds.length) return false;
+  // ---- 3) 环上是否有生成树生效（或已配链路聚合）？----
+  for (var c = 0; c < cycleIds.length; c++) {
+    var l3 = swLinks.filter(function (x) { return x.id === cycleIds[c]; })[0];
+    if (!l3) continue;
+    var ea = devById(allDevices, l3.a.dev), eb = devById(allDevices, l3.b.dev);
+    if (!ea || !eb) continue;
+    // 并行链路例外：两端配了同一 port-group 则是链路聚合，真机不成环
     var aggOk = false;
-    for (var m = 0; m < links.length; m++) {
-      var al = links[m];
-      if (al.serial) continue;
+    swLinks.forEach(function (x) {
+      if (x.id === l3.id) return;
+      var xa = devById(allDevices, x.a.dev), xb = devById(allDevices, x.b.dev);
+      if (!xa || !xb) return;
+      if (!((xa.id === ea.id && xb.id === eb.id) || (xa.id === eb.id && xb.id === ea.id))) return;
       var pa = null, pb = null;
-      if (al.a.dev === d1.id && al.b.dev === d2.id) { pa = al.a.port; pb = al.b.port; }
-      else if (al.b.dev === d1.id && al.a.dev === d2.id) { pa = al.b.port; pb = al.a.port; }
-      else continue;
-      var ga = d1.ports[pa] && d1.ports[pa].aggGroup;
-      var gb = d2.ports[pb] && d2.ports[pb].aggGroup;
-      if (ga && ga === gb) { aggOk = true; break; }
+      if (x.a.dev === ea.id && x.b.dev === eb.id) { pa = x.a.port; pb = x.b.port; }
+      else if (x.b.dev === ea.id && x.a.dev === eb.id) { pa = x.b.port; pb = x.a.port; }
+      else return;
+      var ga = ea.ports[pa] && ea.ports[pa].aggGroup;
+      var gb = eb.ports[pb] && eb.ports[pb].aggGroup;
+      if (ga && ga === gb) aggOk = true;
+    });
+    if (aggOk) continue;
+    // 环上一端开了生成树且该链路被 STP 阻断 → 环已被消除，不是风暴
+    var stpOn = (ea.stp && ea.stp.enabled) || (eb.stp && eb.stp.enabled);
+    if (stpOn) {
+      if (isStpBlocked(ea, l3.a.port, stpInfo) || isStpBlocked(eb, l3.b.port, stpInfo)) continue;
     }
-    if (!aggOk) return true;
+    return true;   // 环上无 STP 生效 → 广播风暴
   }
   return false;
 }
-
 // ---------- 真实链路延迟模型 ----------
 // 按设备 MAC 派生一个稳定的"延迟画像"，保证同一对设备每次 ping 结果一致，
 // 同时不同链路耗时不同（同网段 < 跨路由器 < 跨三层交换）。
@@ -1311,7 +1380,12 @@ function formatPingWin(dstIp, m, okCount, total) {
   var lines = [];
   lines.push("");
   lines.push("正在 Ping " + dstIp + " [" + dstIp + "] 具有 32 字节的数据:");
-  lines.push("来自 " + dstIp + " 的回复: 字节=32 时间=" + m.min + "ms TTL=" + (64));
+  if (okCount > 0) {
+    lines.push("来自 " + dstIp + " 的回复: 字节=32 时间=" + m.min + "ms TTL=" + (64));
+  } else {
+    // 全部超时：Windows 输出「请求超时」
+    for (var to = 0; to < total; to++) lines.push("请求超时。");
+  }
   lines.push("");
   lines.push(dstIp + " 的 Ping 统计信息:");
   lines.push("    数据包: 已发送 = " + total + "，已接收 = " + okCount +
@@ -2660,16 +2734,23 @@ function learnMac(dev, mac, port, vlan) {
   return rec;
 }
 
-function measurePing(allDevices, links, srcDev, dstIp, stpInfo) {
+function measurePing(allDevices, links, srcDev, dstIp, stpInfo, pathLen) {
+  // 跳数：优先用实际路径经过的设备数（由 simulatePing 传入），
+  // 没有路径信息时退回「源设备直连链路数」的粗略估算
   var hops = 0;
-  if (srcDev && srcDev.type === "pc" && srcDev.pcIp) {
+  if (pathLen && pathLen > 0) {
+    hops = pathLen - 1;
+  } else if (srcDev && srcDev.type === "pc" && srcDev.pcIp) {
     for (var i = 0; i < links.length; i++) {
       var l = links[i];
       if ((l.a.dev === srcDev.id || l.b.dev === srcDev.id)) hops++;
     }
   }
   var lp = latencyProfile(srcDev);
-  var base = lp.same + Math.min(hops, 6) * (lp.hop * 0.35 + 0.15);
+  // 每跳代价 = 链路基础时延 + 固定处理开销（0.8ms/跳），
+  // 使路径长度的影响明显大于随机抖动（0~0.7ms），符合「越远越慢」的直觉
+  var perHop = lp.hop * 0.5 + 0.8;
+  var base = lp.same + Math.min(hops, 12) * perHop;
   var seed = ipToInt(dstIp) || 1;
   var mk = function (k) { var x = (seed + k * 2654435761) >>> 0; return (x % 1000) / 1000; };
   var min = Math.round(base * 10) / 10;

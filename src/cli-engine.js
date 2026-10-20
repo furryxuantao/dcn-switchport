@@ -794,7 +794,7 @@ function execLine(ctx, rawLine) {
         var times = Sim.pingTimes(m, TOTAL, target);
         ctx.stream(head, 0);
         times.forEach(function (t, i) {
-          ctx.stream(Sim.formatPingOne(target, t, 64), 340 + Math.round(t * 60));
+          ctx.stream(Sim.formatPingOne(target, t, 64), Math.min(520, 340 + Math.round(t * 20)));
         });
         ctx.stream(Sim.pingStatsBlock(target, m, TOTAL, TOTAL), 420);
         return { output: "", prompt: promptFor(dev, sess), streamed: true };

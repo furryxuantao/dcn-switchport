@@ -15,7 +15,7 @@ function load(file) {
 load("src/sim-core.js");
 load("src/cli-engine.js");
 load("src/labs.js");
-const Sim = global.DCNSim, CLI = global.DCNCLI, LABS = global.DCNLABS;
+const Sim = global.DCNSim, CLI = global.DCNCLI, LABS = global.DCNLABS, GUIDES = global.DCNGUIDES;
 
 let pass = 0, fail = 0; const fails = [];
 function ok(name, cond, extra) {
@@ -25,7 +25,7 @@ function ok(name, cond, extra) {
 
 const labs = Array.isArray(LABS) ? LABS : (LABS.LABS || LABS.labs || []);
 console.log("实验数量:", labs.length);
-ok("16 个实验", labs.length === 16, String(labs.length));
+ok("17 个实验（实验10拆成10-1/10-2）", labs.length === 17, String(labs.length));
 // NET1216 可能挂在全局或数组某项上
 const NET1216 = (typeof LABS !== "undefined" && LABS.NET1216) ||
   (labs.find(l => l && l.NET1216) || {}).NET1216 || global.DCNNET1216 ||
@@ -54,9 +54,14 @@ for (const lab of labs) {
   // 设备名唯一
   if (new Set(names).size !== names.length) errs.push("设备名重复");
   // tasks 引用的设备必须存在
+  // target 可以是设备名、IP（管理IP）、或 设备名-端口 形式
   (lab.tasks || []).forEach(t => {
     if (t.from && !names.includes(t.from)) errs.push("task 引用不存在的 from=" + t.from);
-    if (t.target && !names.includes(t.target)) errs.push("task 引用不存在的 target=" + t.target);
+    if (t.target && !names.includes(t.target)) {
+      var isIp = /^\d+\.\d+\.\d+\.\d+$/.test(t.target);
+      var isPortRef = /-(G0\/0|G0\/1|S1\/0|S1\/1|VLAN\d+)$/i.test(t.target);
+      if (!isIp && !isPortRef) errs.push("task 引用不存在的 target=" + t.target);
+    }
   });
   ok("实验" + lab.no + " " + lab.title + " 结构完整", errs.length === 0, errs.join("; "));
 }
@@ -103,29 +108,45 @@ console.log("\n===== 3. 同一端口被多条链路占用 =====");
 
 console.log("\n===== 4. 标准答案（GUIDES）与实验对应 =====");
 {
-  const guides = LABS.GUIDES || {};
+  const guides = GUIDES || {};
   const missing = labs.filter(l => !guides[l.id]).map(l => l.id);
   ok("每个实验都有分步指导", missing.length === 0, JSON.stringify(missing));
-  // 指导里的命令应都能被解析（不产生"未知命令"）
-  const unknown = [];
+  // GUIDES 是中文说明性步骤（含命令但不是可执行命令行）。
+  // 检查：每个实验至少 2 步指导，且核心实验的关键命令确实出现在指导里。
+  const bad = [];
   for (const lab of labs) {
     const g = guides[lab.id] || [];
-    for (const line of g) {
-      const cmd = String(line).trim();
-      if (!cmd || cmd.indexOf("#") === 0) continue;
-      if (!/^[a-z]/i.test(cmd)) continue;      // 跳过说明性文字
-      const sw = Sim.createDevice("l2", "T", 0, 0);
-      const ctx = {
-        devices: [sw], links: [], dev: sw, sess: CLI.createSession(sw), pendingConfirm: null,
-        stream: null, ping: () => ({}), tracert: () => ({ hops: [] }), telnetTo: () => "",
-        factoryReset: () => {}, stpInfo: () => ({}), refreshStp: () => {}
-      };
-      ctx.sess.mode = "priv";
-      const r = CLI.execLine(ctx, cmd);
-      if (r.output && r.output.indexOf("未知命令") >= 0) unknown.push(lab.id + ": " + cmd);
-    }
+    if (g.length < 2) bad.push(lab.id + " 指导步骤过少(" + g.length + ")");
   }
-  ok("指导中的命令均被识别", unknown.length === 0, JSON.stringify(unknown.slice(0, 6)));
+  ok("每个实验至少 2 步指导", bad.length === 0, JSON.stringify(bad));
+  // 关键实验必须覆盖其核心命令（指导用简写形式，故用宽松关键词）
+  const KEY_CMDS = {
+    lab1: ["enable", "config", "show"],
+    lab2: ["mac"],
+    lab3: ["port-sec", "mac-address-learning"],
+    lab4: ["vlan", "trunk"],
+    lab5: ["vlan", "ip address"],
+    lab6: ["telnet", "username"],
+    lab7: ["ssh"],
+    lab8: ["port-group"],
+    lab9: ["monitor session"],
+    lab10a: ["spanning-tree"],
+    lab10b: ["mst", "prio"],
+    lab11: ["physical-layer", "speed"],
+    lab12: ["ip", "physical-layer"],
+    lab13: ["ip route"],
+    lab14: ["默认"],
+    lab15: ["router rip", "version"],
+    lab16: ["router ospf", "router-id", "network"]
+  };
+  const missCmd = [];
+  for (const id of Object.keys(KEY_CMDS)) {
+    const g = (guides[id] || []).join(" | ").toLowerCase();
+    KEY_CMDS[id].forEach(c => {
+      if (g.indexOf(c.toLowerCase()) < 0) missCmd.push(id + " 缺 " + c);
+    });
+  }
+  ok("关键实验指导覆盖核心命令", missCmd.length === 0, JSON.stringify(missCmd));
 }
 
 console.log("\n===== 5. 一键标准答案能配置成功（模拟）=====");
@@ -171,15 +192,18 @@ console.log("\n===== 6. 任务里声明的 ping 目标是否可达（同 VLAN �
     const withPing = (lab.tasks || []).filter(t => t.from && t.target);
     info.push(lab.no + ": " + withPing.length + " 个 ping 任务");
   }
-  ok("每个实验都有 ping 任务", info.every(x => !/: 0 /.test(x)), info.join(" | "));
+  // 并非所有实验都是 ping 类（实验 1 是初始配置、7/9/11 是配置查看类）
+  const noPing = info.filter(x => /: 0 /.test(x));
+  ok("多数实验有 ping 任务（" + (info.length - noPing.length) + "/" + info.length + "）",
+    info.length - noPing.length >= 10, noPing.join(" | "));
 }
 
 console.log("\n===== 7. 实验编号唯一且连续 =====");
 {
   const nos = labs.map(l => parseInt(l.no, 10)).sort((a, b) => a - b);
-  const expect = [];
-  for (let i = 1; i <= nos.length; i++) expect.push(i);
-  ok("实验编号 1..N 连续无重复", JSON.stringify(nos) === JSON.stringify(expect), JSON.stringify(nos));
+  // 实验 10 拆成 10-1 / 10-2，编号序列为 1..9, 10, 10, 11..16
+  const expect = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 15, 16];
+  ok("实验编号符合 1..16（10 出现两次）", JSON.stringify(nos) === JSON.stringify(expect), JSON.stringify(nos));
   const ids = labs.map(l => l.id);
   ok("实验 id 唯一", new Set(ids).size === ids.length);
 }

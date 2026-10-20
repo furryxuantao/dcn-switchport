@@ -63,4 +63,5 @@ var GUIDES = {
 LABS.forEach(function (l) { if (GUIDES[l.id]) l.steps = GUIDES[l.id]; });
 if (typeof module !== "undefined" && module.exports) module.exports = LABS;
 global.DCNLABS = LABS;
+global.DCNGUIDES = GUIDES;   // 供自动化测试校验分步指导
 })(typeof window !== "undefined" ? window : global);

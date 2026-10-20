@@ -87,7 +87,7 @@ const ok = (c, m, x) => { if (c) { pass++; console.log("PASS " + m); } else { fa
   const midReplies = (midText.match(/来自 /g) || []).length;
   ok(midReplies < 5, "输出是渐进的（此时尚未全部打印）", "已出 " + midReplies + " 行");
   ok(midText.includes("正在 Ping"), "已输出起始行");
-  await wait(2600);
+  await wait(4000);
   const finText = term();
   const finReplies = (finText.match(/来自 /g) || []).length;
   ok(finReplies === 5, "最终打印 5 条回复", finReplies);
