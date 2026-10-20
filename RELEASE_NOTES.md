@@ -77,13 +77,41 @@ src/cli-engine.js   DCN 命令解析与执行
 src/labs.js         16 个实验预设
 src/ui.js           界面与交互
 src/icons.js        图标映射（Lucide, ISC License）
-test/               自动化测试（884 项）
+test/               自动化测试（1095 项）
 electron/           Electron 打包配置
 ```
 
 ### v1.3.0 修复的问题
-- `ip address` 的缩写正则 `add(?:r|ess)?` 对 "address" 不回溯，实际只匹配到 "addr"，
-  导致**路由器物理口上配 IP 一直失败**（课程实验走 vlan 接口路径侥幸可用）
+
+**核心算法**
+- **STP 无法处理多台交换机成环** —— 原实现只会阻塞「同一对交换机之间的并行链路」，
+  三台及以上交换机构成的环路完全不会阻塞，导致课程实验 10（STP/MSTP）的核心场景失效。
+  已重写为标准生成树构建（BFS 建树 → 根端口朝根 FWD → 冗余边阻塞离根更远的一端）。
+  三台成环时只阻塞 1 个端口，其余 5 个 FWD。
+- **广播风暴检测有同样盲区** —— 改用 Union-Find 判环。
+- **MAC 地址表从不在转发时自动学习** —— `learnMac` 定义了、导出了，但转发路径从不调用，
+  `show mac-address-table` 永远为空，实验 2「以太网交换机工作原理」的核心行为缺失。
+  现已在入端口学习源 MAC，并接入「已知单播优先、未知泛洪」的真实交换机转发逻辑。
+- **UI 层污染 MAC 表** —— `doPing` 与 `animatePing` 各有一处把源 MAC 记到
+  「每台交换机的第一个口」的代码，导致表项指向错误端口，**反向通信不通**。
+
+**端口安全**
+- 旧判定条件实际含义是「没配静态 MAC 且 max≤0」才违例，**从未检查 MAC 数量超上限**。
+  已重写为仿真核心实现，并支持 `violation shutdown|protect|restrict` 三种动作。
+
+**诊断准确性**
+- 串口未配 DCE 时钟导致链路 down 时，此前被误报为「VLAN/网关/路由配置不匹配」，
+  现在明确提示「串口时钟未配置：R1:s1/0 —— 需要其中一端提供 DCE 时钟」。
+- MAC 表指向错误端口时明确报「MAC 地址表错误：…记在 e1/0/1，但该口连接的是…」。
+
+**其它**
+- `ip address` 的缩写正则 `add(?:r|ess)?` 对 "address" 不回溯，导致
+  **路由器物理口上配 IP 一直失败**（课程实验走 vlan 接口路径侥幸可用）。
+- 延迟模型的跳数只统计「源设备直连的链路数」，与实际路径长度无关。
+- `enable password` 未记录加密类型（0=明文 / 7=加密）。
+- MSTP 配置模式下 `name <区域名>` 无任何处理。
+- `show ip route` 有默认路由时不显示「Gateway of last resort」。
+- ping 全超时时仍输出「来自 X 的回复」，应为「请求超时」。
 
 ### v1.2.0 修复的问题
 - **IP 换算精度丢失**：`192.168.10.0` 曾被算成 `192.168.0.0`（整数乘法超过 2^31 后精度丢失），
@@ -116,10 +144,16 @@ node test\cisco-parity-2-test.js # 思科对标：三层（62 项）
 node test\cisco-parity-3-test.js # 思科对标：运维（72 项）
 node test\cisco-parity-4-test.js # 思科对标：NAT/PBR/环路（53 项）
 node test\cisco-parity-audit-test.js # 新增代码专项审计（20 项）
+node test\mac-portsecurity-test.js # MAC 学习与端口安全（45 项）
+node test\routing-protocol-test.js # MSTP/OSPF/RIP/静态路由（34 项）
+node test\auth-portsec-test.js  # 认证与端口安全链路（50 项）
+node test\ping-tracert-test.js  # ping/tracert 与延迟模型（36 项）
+node test\labs-integrity-test.js # 16 个实验完整性（31 项）
+node test\ui-regression-test.js # UI 回归（15 项）
 cd test; npm install; cd ..    # jsdom 依赖（仅页面测试需要）
 node test\answer-test.js       # 端到端（24 项）
 ```
-共 884 项自动化测试，全部通过。
+共 1095 项自动化测试，全部通过。
 
 ### 图标许可
 [Lucide](https://lucide.dev) Icons，ISC License。
