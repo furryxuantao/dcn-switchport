@@ -1928,6 +1928,13 @@ function execLine(ctx, rawLine) {
   }
   // ===== mstp region =====
   if (sess.mode === "mstp") {
+    // 区域名：name <区域名>（MSTP 域）
+    var nmst = line.match(/^name\s+(\S+)$/i);
+    if (nmst) {
+      dev.stp.regionName = nmst[1];
+      dev.stp.enabled = true;
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     var im = line.match(/^instance\s+(\d+)\s+vlan\s+(.+)$/i);
     if (im) {
       var inst = im[1], vlist = parseVlanList(im[2].replace(/,/g, ";"));
@@ -1935,7 +1942,7 @@ function execLine(ctx, rawLine) {
       dev.stp.instances[inst] = vlist; dev.stp.enabled = true; ctx.refreshStp();
       return { output: "", prompt: promptFor(dev, sess) };
     }
-    return { output: "% 用法：instance <号> vlan <列表>", prompt: promptFor(dev, sess) };
+    return { output: "% 用法：name <区域名> / instance <号> vlan <列表>", prompt: promptFor(dev, sess) };
   }
   // ===== rip =====
   if (sess.mode === "rip") {
@@ -1997,7 +2004,10 @@ function execLine(ctx, rawLine) {
     var netm = line.match(/^network\s+(\S+)\s+(\S+)\s+area\s+(\d+)$/i);
     if (netm) {
       if (S().ipToInt(netm[1]) === null || S().ipToInt(netm[2]) === null) return { output: "% network格式：network 网段 掩码 area 号", prompt: promptFor(dev, sess) };
-      dev.ospf.networks.push({ net: netm[1], mask: netm[2], area: netm[3] });
+      var areaId = parseInt(netm[3], 10);
+    dev.ospf.networks.push({ net: netm[1], mask: netm[2], area: isNaN(areaId) ? netm[3] : areaId });
+    // 记录已配置的 area，便于 show ip ospf 展示
+    if (dev.ospf.areas.indexOf(String(netm[3])) < 0) dev.ospf.areas.push(String(netm[3]));
       return { output: "", prompt: promptFor(dev, sess) };
     }
     return { output: "% ospf模式：router-id / network 网段 掩码 area 号", prompt: promptFor(dev, sess) };

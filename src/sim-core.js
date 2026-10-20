@@ -1468,9 +1468,18 @@ function showIpRoute(dev, allDevices, links) {
   // 按C/S/R/O排序
   var order = { "C": 0, "S": 1, "S*": 1, "R": 2, "O": 3 };
   t.sort(function (a, b) { return (order[a.proto] - order[b.proto]) || (a.dest < b.dest ? -1 : 1); });
+  var gw = null;
   t.forEach(function (r) {
+    if (r.proto === "S*") {
+      // 默认路由单独一行，格式与思科一致
+      lines.push("S*" + "       0.0.0.0/0 is directly connected, " + r.nextHop);
+      if (!gw) gw = r.nextHop;
+      return;
+    }
     lines.push(r.proto + "       " + (r.dest + "/" + maskToPrefix(r.mask)) + " via " + r.nextHop + ", " + r.port);
   });
+  // Gateway of last resort：有默认路由时显示
+  if (gw) lines.push("", "Gateway of last resort is " + gw);
   return lines.join("\n");
 }
 function showSpanningTree(dev, stpInfo) {
