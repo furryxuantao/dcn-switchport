@@ -415,7 +415,7 @@ function candidatesFor(mode) {
     add("spanning-tree bpdufilter"); add("spanning-tree guard root");
     add("spanning-tree edge"); add("description <text>");
     add("speed <10|100|1000>"); add("duplex <auto|full|half>"); add("negotiation auto");
-    add("storm-control broadcast level <n>"); add("udld enable"); add("dot1x port-control auto"); add("proxy arp"); add("ip helper-address <ip>");
+    add("storm-control broadcast level <n>"); add("udld enable"); add("dot1x port-control auto"); add("dot1x authenticate <mac>"); add("proxy arp"); add("ip helper-address <ip>");
     add("ip nat inside"); add("ip nat outside");
     add("switchport priority <0-7>"); add("ip dhcp snooping trust"); add("no ip dhcp snooping trust");
     add("loop-guard enable"); add("no loop-guard"); add("switchport speed limit <kbps>");
@@ -1664,6 +1664,16 @@ function execLine(ctx, rawLine) {
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // 802.1X
+    // 802.1X 认证：dot1x authenticate <MAC>（认证通过后该口可通信）
+    // 注意：必须排在下面的 dot1x 之前，否则会被 ipt("dot1x") 提前拦截
+    if (ipt("dot1x authenticate")) {
+      var authMac = _itp[2];
+      if (!authMac) return { output: "% 用法：dot1x authenticate <MAC地址>", prompt: promptFor(dev, sess) };
+      var nmAuth = S().normMac(authMac);
+      if (!nmAuth) return { output: "% MAC 格式如 XX-XX-XX-XX-XX-XX", prompt: promptFor(dev, sess) };
+      eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].dot1xAuth = true; });
+      return { output: "", prompt: promptFor(dev, sess) };
+    }
     if (ipt("dot1x") || ipt("authentication port-control")) {
       eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].dot1x = !_ifNo; });
       return { output: "", prompt: promptFor(dev, sess) };

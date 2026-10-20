@@ -48,8 +48,6 @@ function networkOf(ip, mask) {
 function sameSubnet(ip1, ip2, mask) {
   return networkOf(ip1, mask) === networkOf(ip2, mask);
 }
-function isValidMask(mask) { return maskToPrefix(mask) !== null; }
-
 var _macCounter = 0;
 function genMac(seed) {
   _macCounter++;
@@ -149,7 +147,7 @@ function makePorts(type) {
       name: name, shutdown: false, stpBlock: false,
       mode: "access", accessVlan: 1, trunkAllowed: null, // null=all
       portSecurity: { enabled: false, max: 1, staticMacs: [], learnedMacs: {}, violation: "shutdown", recovery: 0, violated: false },
-      aggGroup: 0, mirrorRole: null,
+      aggGroup: 0,
       trust: false,            // DHCP Snooping 信任端口
       isolateGroup: 0,         // 端口隔离组号，0=不隔离
       qosPrio: 0,              // 802.1p 优先级 0~7
@@ -160,7 +158,7 @@ function makePorts(type) {
       bpduFilter: false,       // BPDU 过滤：静默丢弃收到的 BPDU
       rootGuard: false,        // 根守卫
       edgePort: false,         // DTP 边缘口
-      dot1x: false,            // 802.1X 认证
+      dot1x: false, dot1xAuth: false,            // 802.1X 认证
       speed: "auto",           // 速率：auto/10/100/1000
       duplex: "auto",          // 双工：auto/full/half
       negotiation: true,       // 自协商
@@ -319,21 +317,6 @@ function setAccessVlan(dev, portName, vlanId) {
   var mem = dev.vlans[vlanId].members;
   if (mem.indexOf(portName) < 0) mem.push(portName);
   return true;
-}
-function portVlanList(dev, portName) {
-  var p = dev.ports[portName];
-  if (!p) return [];
-  if (p.mode === "trunk") {
-    if (!p.trunkAllowed) return Object.keys(dev.vlans).map(function (x) { return parseInt(x, 10); });
-    return p.trunkAllowed.slice();
-  }
-  return [p.accessVlan || 1];
-}
-function vlanOfPacketIngress(dev, portName) {
-  var p = dev.ports[portName];
-  if (!p) return 1;
-  if (p.mode === "trunk") return null; // trunk需按包vlan tag，本仿真取对端access vlan
-  return p.accessVlan || 1;
 }
 
 // ---------- STP 计算（简化但符合PPT语义） ----------
@@ -670,19 +653,6 @@ function routeLookup(dev, dstIp, allDevices, links) {
   return best;
 }
 
-// ---------- 二层可达性 ----------
-function l2PathExists(sw, fromPort, toPort, vlan, allDevices, links, stpInfo) {
-  // 同一交换机内：vlan允许 + 未shutdown + 未BLK 即通
-  var p1 = sw.ports[fromPort], p2 = sw.ports[toPort];
-  if (!p1 || !p2 || p1.shutdown || p2.shutdown) return false;
-  if (isStpBlocked(sw, fromPort, stpInfo) || isStpBlocked(sw, toPort, stpInfo)) return false;
-  function allows(p, v) {
-    if (p.mode === "access") return (p.accessVlan || 1) === v;
-    if (!p.trunkAllowed) return true;
-    return p.trunkAllowed.indexOf(v) >= 0;
-  }
-  return allows(p1, vlan) && allows(p2, vlan);
-}
 
 // ---------- ping / tracert 仿真 ----------
 function deviceIpList(dev) {
@@ -727,6 +697,14 @@ function linkOperUp(allDevices, link, stpInfo) {
   if (!pa || !pb) return false;
   if (pa.shutdown || pb.shutdown) return false;
   if (isStpBlocked(da, link.a.port, stpInfo) || isStpBlocked(db, link.b.port, stpInfo)) return false;
+  // UDLD：检测单向链路。两端速率或双工不匹配时链路不可用（真机行为）
+  if ((pa.udld || pb.udld)) {
+    var aRate = pa.speed && pa.speed !== "auto" ? pa.speed : null;
+    var bRate = pb.speed && pb.speed !== "auto" ? pb.speed : null;
+    var aDup = pa.duplex && pa.duplex !== "auto" ? pa.duplex : null;
+    var bDup = pb.duplex && pb.duplex !== "auto" ? pb.duplex : null;
+    if ((aRate && bRate && aRate !== bRate) || (aDup && bDup && aDup !== bDup)) return false;
+  }
   // 串口DCE时钟检查：两端s口若有DCE端未配时钟则down（简化：任一s口所在router未配clock则down）
   function isSerial(pn) { return pn.charAt(0) === "s"; }
   if (isSerial(link.a.port) || isSerial(link.b.port)) {
@@ -986,6 +964,16 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     if (dev.type === "l2") {
       // 二层：只在同一 vlan 内泛洪，且收发端口都要放行该 vlan、未被 STP 阻断
       var vlan = (cur.vlan === null || cur.vlan === undefined) ? 1 : cur.vlan;
+      // ---- 802.1X：未认证的端口不允许通信 ----
+      if (cur.fromPort && dev.ports[cur.fromPort] && dev.ports[cur.fromPort].dot1x) {
+        if (!dev.ports[cur.fromPort].dot1xAuth) {
+          return {
+            ok: false, path: [],
+            reason: "802.1X 认证未通过：" + dev.hostname + " 的 " + cur.fromPort +
+              " 开启了 dot1x，主机尚未认证，数据被丢弃"
+          };
+        }
+      }
       // ---- MAC 地址表自学习：交换机从入端口学习源 MAC ----
       // 这是「以太网交换机工作原理」实验的核心：show mac-address-table
       if (cur.fromPort && cur.srcMac) {
@@ -2759,7 +2747,17 @@ function measurePing(allDevices, links, srcDev, dstIp, stpInfo, pathLen) {
   // 每跳代价 = 链路基础时延 + 固定处理开销（0.8ms/跳），
   // 使路径长度的影响明显大于随机抖动（0~0.7ms），符合「越远越慢」的直觉
   var perHop = lp.hop * 0.5 + 0.8;
-  var base = lp.same + Math.min(hops, 12) * perHop;
+  // 端口速率影响：百兆链路的时延明显高于千兆（真机行为）
+  var rateFactor = 1;
+  if (srcDev && srcDev.type === "pc") {
+    var sp = firstLinkNeighbor(allDevices, links, srcDev);
+    if (sp && sp.dev && sp.dev.ports && sp.dev.ports[sp.port]) {
+      var spd = sp.dev.ports[sp.port].speed;
+      if (spd === "10") rateFactor = 2.2;
+      else if (spd === "100") rateFactor = 1.4;
+    }
+  }
+  var base = (lp.same + Math.min(hops, 12) * perHop) * rateFactor;
   var seed = ipToInt(dstIp) || 1;
   var mk = function (k) { var x = (seed + k * 2654435761) >>> 0; return (x % 1000) / 1000; };
   var min = Math.round(base * 10) / 10;
