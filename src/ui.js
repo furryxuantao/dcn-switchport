@@ -214,14 +214,9 @@ function doPing(srcDev, ip, silent) {
       " 通信失败。请在环路交换机开启 spanning-tree。</span>");
     status("广播风暴 · 通信阻断");
   }
-  try {
-    var tgt = Sim.findDeviceByIp(devices, ip);
-    if (r.ok && tgt) {
-      devices.forEach(function (d) {
-        if (d.type === "l2" || d.type === "l3") Sim.learnMac(d, srcDev.pcMac || srcDev.mac, Object.keys(d.ports)[0], 1);
-      });
-    }
-  } catch (e) {}
+  // MAC 地址表由转发路径在入端口自动学习（Sim.simulatePing 内部），
+  // 不在此处手工写入——手工写入会把源 MAC 记到每台交换机的第一个口，
+  // 造成 MAC 表指向错误端口，进而破坏后续的单播转发。
   if (!silent) { if (r.ok) animatePing(srcDev, ip, r); else animateFail(srcDev); }
   pulseNode(srcDev);
   // 延迟信息：同一设备对保持稳定，跨设备不同（真实链路感）
@@ -1249,10 +1244,12 @@ function runTaskTest(t, btn) {
     var src = devByName(t.from) || devices.filter(function (d) { return d.type === "pc"; })[0];
     var tip = t.target;
     // target 可能是设备名（如 PC2）或 R1-G0/0 形式，转成 IP
+    var candIps = null;      // 目标设备的所有 IP，逐个尝试
     var byNm = devByName(tip);
     if (byNm) {
       var ips0 = Sim.deviceIpList(byNm);
       if (!ips0.length) { btn.textContent = "无IP"; print(escapeHtml(tip + " 还没有配置 IP")); return; }
+      candIps = ips0;
       tip = ips0[0];
     }
     var m = String(tip).match(/^(.*)-(G0\/0|G0\/1|S1\/0|S1\/1|VLAN\d+)$/i);
@@ -1262,15 +1259,23 @@ function runTaskTest(t, btn) {
         var want = m[2].toLowerCase(); var ip = null;
         if (want.indexOf("vlan") === 0) ip = rd.vlanIf[want.replace("vlan", "")] && rd.vlanIf[want.replace("vlan", "")].ip;
         else ip = rd.ifIp[want] && rd.ifIp[want].ip;
-        if (ip) tip = ip;
+        if (ip) { tip = ip; candIps = null; }   // 指定了具体口，只试这一个
       }
     }
     if (!src) { btn.textContent = "无源"; return; }
-    var r = doPing(src, tip);
-    btn.textContent = r.ok ? "✓ 通 " + r.latency.avg + "ms" : (r.storm ? "⚠ 风暴" : "✗ 不通");
-    print(escapeHtml(src.hostname + " ping " + tip + " → " +
-      (r.ok ? "连通 " + r.latency.avg + "ms（最短" + r.latency.min + " 最长" + r.latency.max + "）" :
-        r.storm ? "不通（广播风暴阻断）" : "不通：" + r.reason)));
+    // 目标设备有多个 IP 时逐个尝试，任一可达即算通过
+    var r = null, usedTip = tip;
+    var tries = candIps && candIps.length ? candIps : [tip];
+    for (var ti = 0; ti < tries.length; ti++) {
+      usedTip = tries[ti];
+      r = doPing(src, usedTip, true);   // 静默，避免刷屏
+      if (r.ok) break;
+    }
+    var lat = (r && r.ok && r.latency) ? r.latency : null;
+    btn.textContent = r && r.ok ? "✓ 通 " + (lat ? lat.avg + "ms" : "") : (r && r.storm ? "⚠ 风暴" : "✗ 不通");
+    print(escapeHtml(src.hostname + " ping " + usedTip + " → " +
+      (r && r.ok ? "连通 " + (lat ? lat.avg + "ms（最短" + lat.min + " 最长" + lat.max + "）" : "") :
+        r && r.storm ? "不通（广播风暴阻断）" : "不通：" + (r ? r.reason : "未知错误"))));
   } else print(escapeHtml("自查：" + t.text + "（在CLI执行，如 " + (t.cli || "show ?") + "）"));
 }
 function renderCap() {
@@ -1378,9 +1383,8 @@ function animatePing(src, ip, res) {
   // 只做状态反馈：途经设备闪一下端口灯 + MAC 学习飘字
   blinkNode(src.hostname); blinkNode(tgt.hostname);
   linksBetween(src, tgt).forEach(function (l) { blinkPortLed(l.a.dev, l.a.port, 500); blinkPortLed(l.b.dev, l.b.port, 500); });
-  devices.forEach(function (d) {
-    if (d.type === "l2" || d.type === "l3") Sim.learnMac(d, src.pcMac || src.mac, Object.keys(d.ports)[0], 1);
-  });
+  // 注意：MAC 地址表由转发路径自动学习（见 Sim.simulatePing），
+  // 此处不可手工写入——否则会把源 MAC 记到每台交换机的第一个口，导致表项指错端口。
   if (res.path) res.path.forEach(function (h) {
     var d = devByName(h.dev);
     if (d && (d.type === "l2" || d.type === "l3")) floatTip(d, "学习 MAC", "ok");
