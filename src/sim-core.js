@@ -961,7 +961,15 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
       push(nb2.dev.id, v2, cur.path.concat([{ dev: nb2.dev.hostname, via: dev.hostname + "->" + nb2.port }]), nb2.port);
       continue;
     }
-    if (dev.type === "l2") {
+    // 三层交换机既做三层转发也做二层转发：只有在「目的 IP 需要三层处理」时
+    // 才走路由分支；否则按二层广播域转发（真机行为）。
+    var _l3Fallback = false;
+    if (dev.type === "l3") {
+      var _rtChk = routeLookup(dev, dstIp, allDevices, links);
+      // 查不到路由，或路由出口是物理口（说明目的 IP 在别的网段，需经本机三层转发）
+      _l3Fallback = !_rtChk || (_rtChk.proto === "C" && !String(_rtChk.port).match(/^vlan/));
+    }
+    if (dev.type === "l2" || _l3Fallback) {
       // 二层：只在同一 vlan 内泛洪，且收发端口都要放行该 vlan、未被 STP 阻断
       var vlan = (cur.vlan === null || cur.vlan === undefined) ? 1 : cur.vlan;
       // ---- 802.1X：未认证的端口不允许通信 ----
@@ -1092,6 +1100,22 @@ function simulatePing(allDevices, links, srcDev, dstIp, stpInfo) {
     // 三层交换机同样会学习 MAC（它也做二层转发）
     if (dev.type === "l3" && cur.fromPort && cur.srcMac) {
       learnMac(dev, cur.srcMac, cur.fromPort, (cur.vlan === null || cur.vlan === undefined) ? 1 : cur.vlan);
+    }
+    // ---- ACL 入向裁决（L3/路由器同样适用）----
+    // 路由器的 ACL 是 ACL 的主要用途（按源/目的 IP 与端口过滤）
+    if (cur.srcIp && cur.fromPort) {
+      var aclPkt3 = {
+        srcIp: cur.srcIp, dstIp: dstIp, proto: "ip",
+        srcPort: 0, dstPort: 0, inPort: cur.fromPort
+      };
+      var aclAct3 = aclDecide(dev, aclPkt3, cur.fromPort);
+      if (aclAct3 === "deny") {
+        return {
+          ok: false, path: [],
+          reason: "ACL 阻断：报文 " + cur.srcIp + " → " + dstIp + " 被 " +
+            dev.hostname + " 上的访问控制列表拒绝（deny）"
+        };
+      }
     }
     var rt = routeLookup(dev, dstIp, allDevices, links);
     if (!rt) continue; // 无路由
