@@ -1272,10 +1272,24 @@ function runTaskTest(t, btn) {
       if (r.ok) break;
     }
     var lat = (r && r.ok && r.latency) ? r.latency : null;
-    btn.textContent = r && r.ok ? "✓ 通 " + (lat ? lat.avg + "ms" : "") : (r && r.storm ? "⚠ 风暴" : "✗ 不通");
+    // 任务可声明预期结果（expect: "up" | "down"），按钮显示「实际 vs 预期」
+    var expect = t.expect || null;
+    var actualUp = !!(r && r.ok);
+    var match = !expect || (expect === "up" ? actualUp : !actualUp);
+    var mark = match ? "✓" : "✗";
+    btn.textContent = mark + " " + (actualUp ? "通 " + (lat ? lat.avg + "ms" : "") : (r && r.storm ? "风暴" : "不通"));
+    if (expect) {
+      btn.textContent += "（预期" + (expect === "up" ? "通" : "不通") + "）";
+    }
     print(escapeHtml(src.hostname + " ping " + usedTip + " → " +
-      (r && r.ok ? "连通 " + (lat ? lat.avg + "ms（最短" + lat.min + " 最长" + lat.max + "）" : "") :
-        r && r.storm ? "不通（广播风暴阻断）" : "不通：" + (r ? r.reason : "未知错误"))));
+      (actualUp ? "连通 " + (lat ? lat.avg + "ms（最短" + lat.min + " 最长" + lat.max + "）" : "") :
+        r && r.storm ? "不通（广播风暴阻断）" : "不通：" + (r ? r.reason : "未知错误")) +
+      (expect ? "　【预期" + (expect === "up" ? "连通" : "不通") + "，" + (match ? "与实际一致" : "与实际不符") + "】" : "")));
+    // stage 标注的任务需要学生先做对应操作（如先拔线/先关 STP），提示如何复现
+    if (t.stage && !match) {
+      print('<span class="dim">提示：此任务需在「' +
+        escapeHtml((t.stageHint || "完成对应操作之后")) + '」的状态下验证，可先完成该操作再点本按钮。</span>');
+    }
   } else print(escapeHtml("自查：" + t.text + "（在CLI执行，如 " + (t.cli || "show ?") + "）"));
 }
 function renderCap() {
