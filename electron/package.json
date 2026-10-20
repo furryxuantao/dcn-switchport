@@ -1,7 +1,14 @@
 {
   "name": "dcn-simulator",
   "version": "1.3.0",
-  "description": "神州数码 DCN 网络模拟器（类 Packet Tracer，指令按课程 PPT/实验报告）",
+  "description": "Digital China DCN network simulator (Packet Tracer-like, CLI aligned with the course PPT and lab reports)",
+  "author": "furryxuantao",
+  "license": "MIT",
+  "homepage": "https://github.com/furryxuantao/dcn-switchport",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/furryxuantao/dcn-switchport.git"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -13,7 +20,8 @@
   },
   "build": {
     "appId": "cn.dcn.simulator",
-    "productName": "DCN网络模拟器",
+    "productName": "DCN Network Simulator",
+    "copyright": "Copyright © 2026 furryxuantao",
     "directories": {
       "output": "release"
     },
@@ -45,10 +53,13 @@
           "arch": ["x64"]
         }
       ],
-      "artifactName": "DCN-Simulator-${version}-portable.${ext}"
+      "icon": "../assets/icon.ico",
+      "artifactName": "DCN-Network-Simulator-${version}-portable.${ext}"
     },
     "portable": {
-      "artifactName": "DCN-Simulator-${version}-portable.${ext}"
+      "artifactName": "DCN-Network-Simulator-${version}-portable.${ext}",
+      "unicode": false,
+      "requestExecutionLevel": "user"
     }
   }
 }
