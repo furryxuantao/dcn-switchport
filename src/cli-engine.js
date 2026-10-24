@@ -760,8 +760,12 @@ function execLine(ctx, rawLine) {
   }
   if (ctx.pendingConfirm === "reload" && /^(y|yes)$/i.test(line)) {
     ctx.pendingConfirm = null;
-    // reload后running回到startup（若无startup则出厂）
-    return { output: "Reloading...", prompt: promptFor(dev, sess) };
+    // 真正的重启交给 UI 层：按真实节奏打印引导信息，再恢复 startup-config / 出厂状态
+    return { output: "", reload: true, prompt: promptFor(dev, sess) };
+  }
+  if (ctx.pendingConfirm === "reload" && /^(n|no)$/i.test(line)) {
+    ctx.pendingConfirm = null;
+    return { output: "", prompt: promptFor(dev, sess) };
   }
   if (uniq(line, ["set default"]) === "set default" && sess.mode === "priv") {
     // 出厂：保留实现为重置动态状态（由UI层真正重置，这里给提示）

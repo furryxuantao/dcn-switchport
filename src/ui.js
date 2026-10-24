@@ -90,8 +90,12 @@ function submitEdit(el) {
   var line = freezeEdit(true);
   if (!line.trim()) { showPrompt(); return; }
   history.push(line); hi = history.length;
-  var res = CLI.execLine(ctxFor(d), line);
+  var _ctx = ctxFor(d);
+  var res = CLI.execLine(_ctx, line);
+  // 把 Y/N 确认态回写到 UI 层，否则 engine 永远收不到 pendingConfirm
+  pendingConfirm = res.needConfirm || _ctx.pendingConfirm || null;
   if (res.needSecret) pendingSecret = true;
+  if (res.reload) { freezeEdit(false); reloadDevice(d); return; }
   if (res.streamed) { freezeEdit(false); return; } // 流式：输入行收尾时再补
   if (res.output) print(escapeHtml(res.output));
   showPrompt();
@@ -204,6 +208,72 @@ function ctxFor(dev) {
     telnetTo: function (srcDev, ip) { return doTelnet(srcDev, ip); }
   };
 }
+/* ---------- reload：真实的延迟重启（引导信息 + 恢复 startup-config） ---------- */
+var _reloadTimers = [];
+function _reloadLater(fn, ms) { _reloadTimers.push(setTimeout(fn, ms)); }
+function _reloadCisco() { return typeof isCiscoFlavor === "function" && isCiscoFlavor(); }
+function _resetDeviceHard(dev) {
+  var fresh = Sim.createDevice(dev.type, dev.factoryName || null, dev.x, dev.y);
+  fresh.id = dev.id;
+  Object.keys(fresh).forEach(function (k) { dev[k] = fresh[k]; });
+  sessions[dev.id] = CLI.createSession(dev);
+  refreshStp();
+}
+function applyStartupText(dev, text) {
+  if (!text) return;
+  var sess = CLI.createSession(dev);
+  var ctx = ctxFor(dev); ctx.sess = sess;
+  var confCmd = _reloadCisco() ? "configure terminal" : "config terminal";
+  String(text).split(/\r?\n/).forEach(function (raw) {
+    var cmd = String(raw || "").replace(/\s+$/, "").trim();
+    if (!cmd || cmd === "!" || cmd === "end") return;
+    if (/^(Building configuration|Current configuration|version\s)/i.test(cmd)) return;
+    if (!/^\s/.test(raw)) {
+      var guard = 0;
+      while (sess.mode !== "global" && sess.mode !== "priv" && guard++ < 16) CLI.execLine(ctx, "exit");
+      if (sess.mode === "priv") CLI.execLine(ctx, confCmd);
+    }
+    CLI.execLine(ctx, cmd);
+  });
+  sessions[dev.id] = CLI.createSession(dev);
+  refreshStp();
+}
+function reloadDevice(dev) {
+  _reloadTimers.forEach(function (t) { clearTimeout(t); });
+  _reloadTimers = [];
+  setBusy(true);
+  var saved = dev.startupConfig;
+  var cisco = _reloadCisco();
+  var boot = cisco ? [
+    "System Bootstrap, Version 15.0(2r)EA5, RELEASE SOFTWARE (fc1)",
+    "Compiled Tue 20-Mar-12 16:45 by prod_rel_team",
+    'Loading "flash:c2960-lanbasek9-mz.150-2.SE8.bin"...'
+  ] : [
+    "BootROM 1.0.0.0 (RGNOS boot loader)",
+    "Initializing flash...",
+    "Loading flash:/rgnos.bin ..."
+  ];
+  print(escapeHtml("Building configuration..."));
+  _reloadLater(function () { print(escapeHtml("[OK]")); }, 700);
+  _reloadLater(function () {
+    print(escapeHtml(cisco ? "Reload requested by console. Reload Reason: Reload Command." : "System is restarting..."));
+  }, 1400);
+  _reloadLater(function () { print(escapeHtml(boot[0])); }, 2300);
+  _reloadLater(function () { print(escapeHtml(boot[1])); }, 2900);
+  _reloadLater(function () { print(escapeHtml(boot[2])); }, 3500);
+  _reloadLater(function () {
+    print(escapeHtml("########################################################################## [OK]"));
+  }, 4400);
+  _reloadLater(function () {
+    _resetDeviceHard(dev);
+    applyStartupText(dev, saved);
+    print(escapeHtml(cisco ? "Press RETURN to get started!" : "Press ENTER to get started."));
+    setBusy(false);
+    showPrompt();
+    render();
+  }, 5400);
+}
+
 function doPing(srcDev, ip, silent) {
   // 端口安全先行：在第一个包入口即违例（真机行为），而不是通一次再关断
   var sec = checkPortSecurity(srcDev);
