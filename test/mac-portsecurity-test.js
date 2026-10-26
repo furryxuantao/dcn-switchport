@@ -185,7 +185,7 @@ console.log("\n===== 5. 端口安全：violation protect / restrict =====");
   ok("recovery 时间记录", sw.ports["e1/0/1"].portSecurity.recovery === 60,
     String(sw.ports["e1/0/1"].portSecurity.recovery));
   const bad = CLI.execLine(c, "swi port-sec violation xxx");
-  ok("非法 violation 被拒", bad.output.indexOf("用法") >= 0, bad.output);
+  ok("非法 violation 被拒", bad.output.indexOf("Usage:") >= 0, bad.output);
 }
 
 console.log("\n===== 6. show port-security 反映真实状态 =====");

@@ -327,10 +327,10 @@ function checkPortSecurity(pcDev) {
 function doTelnet(srcDev, ip) {
   var tgt = Sim.findDeviceByIp(devices, ip) || devices.find(function (d) { return d.mgmtIp === ip; });
   if (!tgt) tgt = devices.find(function (d) { return (d.type === "l2" || d.type === "l3") && d.mgmtIp === ip; });
-  if (!tgt) return "% 目标不可达 " + ip;
-  if (!tgt.telnet.enabled) return "% Telnet服务未开启";
-  if (tgt.telnet.securityIp && srcDev.pcIp !== tgt.telnet.securityIp && srcDev.type === "pc") return "% 被 securityip 拒绝（仅允许 " + tgt.telnet.securityIp + "）";
-  if (!tgt.users.length) return "% 无用户，请先 username xxx password 0 yyy";
+  if (!tgt) return "% Destination unreachable: " + ip;
+  if (!tgt.telnet.enabled) return "% Telnet service is disabled.";
+  if (tgt.telnet.securityIp && srcDev.pcIp !== tgt.telnet.securityIp && srcDev.type === "pc") return "% Denied by securityip (only " + tgt.telnet.securityIp + " is allowed).";
+  if (!tgt.users.length) return "% No users configured. Add one first: username <name> password 0 <password>";
   curId = tgt.id; render(); showPrompt();
   return "连接到 " + tgt.hostname + "（已切换终端上下文，用户名/密码在真机上验证）";
 }
@@ -1561,10 +1561,12 @@ function doLoadLab(lab) {
       }
     }
   });
+  var _pcIps = applyLabPcIps(lab);
   curId = devices.length ? devices[0].id : null;
   refreshStp(); renderTasks();
   fitView(); // 载入即自适应，保证所有连线可见
   print('<span class="dim">已载入实验 ' + lab.no + " · " + escapeHtml(lab.title) + "（" + escapeHtml(lab.desc) + "）</span>", "ok");
+  if (_pcIps) print('<span class="dim">已为 ' + _pcIps + ' 台 PC 预配 IP（双击电脑 → ipconfig 查看；直连/同 VLAN 可直接 ping）</span>');
   if (devices[0]) { print('<span class="dim">选线型后点两台设备选端口连线；单击选中，双击进入其 CLI。</span>'); showPrompt(); }
   status("实验 " + lab.no + " 已载入 · " + devices.length + " 台设备");
   // 载入体检：连线是否都指向存在的端口
@@ -1578,6 +1580,49 @@ function doLoadLab(lab) {
   print('<span class="dim">提示：点「一键标准答案」可按实验报告参数自动配置并验证；或点「测试清单」查看分步指引。</span>', "dim");
   fxConfetti(46, $("btnLab"));
   toast("实验 " + lab.no + " 已载入", "check");
+}
+/* ---------- 载入实验时给 PC 预配 IP（与实验报告/标准答案一致） ---------- */
+var LAB_PC_IPS = {
+  lab1:  { PC0: ["192.168.1.11"] },
+  lab2:  { PC0: ["192.168.10.1"], PC1: ["192.168.10.2"], PC2: ["192.168.10.3"], PC3: ["192.168.10.4"] },
+  lab3:  { PC1: ["192.168.10.11"], PC2: ["192.168.10.12"], "PC-Server": ["192.168.10.101"] },
+  lab4:  { PC11: ["192.168.10.11", "192.168.10.254"], PC12: ["192.168.10.12", "192.168.10.254"], PC21: ["192.168.20.21", "192.168.20.254"], PC31: ["192.168.30.31", "192.168.30.254"], PC32: ["192.168.30.32", "192.168.30.254"] },
+  lab5:  { PC11: ["192.168.10.11", "192.168.10.254"], PC21: ["192.168.20.21", "192.168.20.254"], PC31: ["192.168.30.31", "192.168.30.254"] },
+  lab6:  { PC0: ["192.168.1.101", "192.168.1.100"] },
+  lab7:  { PC0: ["192.168.1.101", "192.168.1.100"] },
+  lab8:  { PC0: ["192.168.10.100"], PC1: ["192.168.10.101"] },
+  lab9:  { PC1: ["192.168.10.101"], PC2: ["192.168.10.102"], PC3: ["192.168.10.103"] },
+  lab10a: { PC1: ["192.168.10.100"], PC2: ["192.168.10.101"] },
+  net1216: {
+    PC11: ["192.168.1.11", "192.168.1.254"], PC12: ["192.168.1.12", "192.168.1.254"],
+    PC0:  ["192.168.0.1", "192.168.0.254"],
+    PC21: ["192.168.20.21", "192.168.20.254"], PC22: ["192.168.20.22", "192.168.20.254"],
+    PC31: ["192.168.30.31", "192.168.30.254"], PC32: ["192.168.30.32", "192.168.30.254"]
+  }
+};
+function labPcTable(lab) {
+  if (lab.id === "lab12" || lab.id === "lab13" || lab.id === "lab14" || lab.id === "lab15" || lab.id === "lab16") return LAB_PC_IPS.net1216;
+  return LAB_PC_IPS[lab.id] || null;
+}
+// 给 PC 预配地址：显式表优先，其次按位置给 192.168.1.x/24，保证载入即可 ipconfig/ping
+function applyLabPcIps(lab) {
+  var table = labPcTable(lab) || {};
+  var n = 0;
+  devices.forEach(function (d, i) {
+    if (d.type !== "pc") return;
+    var hit = table[d.hostname];
+    if (hit) {
+      d.pcIp = hit[0];
+      d.pcMask = "255.255.255.0";
+      d.pcGw = hit[1] || null;
+    } else if (!d.pcIp) {
+      d.pcIp = "192.168.1." + (11 + i);
+      d.pcMask = "255.255.255.0";
+      d.pcGw = null;
+    }
+    n++;
+  });
+  return n;
 }
 /* ---------- 一键标准答案：按实验报告配出真正能通的网 ---------- */
 function devN(name) { return devices.filter(function (d) { return d.hostname === name; })[0] || null; }
@@ -1695,8 +1740,8 @@ function autoAnswer() {
       "switchport port-security mac-address " + pc1.pcMac,
       "switchport port-security violation shutdown", "exit", "exit"]);
   } else if (sel === "lab4") {
-    setPc("PC11", "192.168.1.11"); setPc("PC12", "192.168.1.12");
-    setPc("PC21", "192.168.1.21"); setPc("PC31", "192.168.2.31"); setPc("PC32", "192.168.2.32");
+    setPc("PC11", "192.168.10.11"); setPc("PC12", "192.168.10.12");
+    setPc("PC21", "192.168.20.21"); setPc("PC31", "192.168.30.31"); setPc("PC32", "192.168.30.32");
     mkVlan("Switch1", 10, "hardware"); mkVlan("Switch1", 30, "software");
     mkVlan("Switch2", 10, "hardware"); mkVlan("Switch2", 30, "software");
     accVlan("Switch1", "PC11", 10); accVlan("Switch1", "PC12", 10);

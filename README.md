@@ -156,6 +156,15 @@ Windows 用户可下载绿色单文件版 `DCN-Network-Simulator-<版本>-portab
 `E:\network\.venv`，用 `uv pip install --python .venv\Scripts\python.exe ...` 安装，
 未污染全局 conda 环境。
 
+## CLI 反馈与英文提示
+
+- **VLAN 生效反馈**：`vlan 10` 新建后回显 `VLAN 10 created.`；加端口有两条路径，都会逐口回显 `Port e1/0/1 added to VLAN 10.`：接口模式 `switchport access vlan 10`（支持 `int e1/0/1-4` 范围），以及 VLAN 配置模式的 `switchport interface e1/0/1`（支持 `;`、`,` 列表，非法端口回 `% Invalid port: xxx`）。
+- **报错与用法一律英文**：未知命令、非法端口、参数越界、模式误用、show 空态等约 70 条提示改为英文（如 `% Unknown command. Type ? for help.`、`% Invalid port. Example: e1/0/1, e1/0/1-4, g0/0, s1/0, vlan10.`），便于对照真实设备与考试题。
+- **载入实验自动预配 PC 地址**：`loadLab` 会按实验报告写入各 PC 的 `ipconfig`（IP / 子网掩码 / 网关），双击电脑即可查看；未单独列出的实验回退到 `192.168.1.11+` 网段。
+- **VLAN 默认名**：新建 VLAN 自动命名（VLAN 1 为 `default`，其余为 `VLAN0010` 这种四位补零格式），`show vlan` 直接可见。
+- **show 输出英文**：`show version` / `show device-info` / `show clock` / `show vtp` / `show ip rip` 全部英文，不再夹杂中文标签。
+- **接口详情增强**：`show interface e1/0/1` 输出描述、MAC、access/trunk 模式与 PVID/VLAN 名、双工/速率/流控、生成树状态与收发计数；不带端口时逐口列出；修掉 trunk 口 `trunk trunk` 的重复标签。
+
 ## 交互与动画
 - 终端：行内输入（提示符后直接敲），TAB 补全、↑↓ 历史、Ctrl+C/L/U/A/E、`?` 联想；4 套预设主题 + 三色自定义 + 字号，localStorage 记忆
 - 画布：拖空白平移、滚轮缩放（30%~200%）、⤾ 自适应；单击选中、双击进 CLI、Delete 删除

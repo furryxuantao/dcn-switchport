@@ -83,7 +83,7 @@ console.log("\n===== 2. enable 密码流程 =====");
   // 错误密码
   c.sess.pendingEnable = true;
   const r2 = CLI.execLine(c, "wrongpass");
-  ok("错误密码被拒", (r2.output || "").indexOf("密码错误") >= 0, r2.output);
+  ok("错误密码被拒", (r2.output || "").indexOf("Invalid password") >= 0, r2.output);
   ok("错误后回到 user 模式", c.sess.mode === "user", c.sess.mode);
   // 正确密码
   c.sess.pendingEnable = true;

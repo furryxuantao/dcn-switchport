@@ -46,14 +46,14 @@ console.log("\n===== 1. show version / device-info =====");
   const c = ctxOf(sw); c.sess.mode = "priv";
   const v = CLI.execLine(c, "show version").output;
   ok("show version 含设备名", v.indexOf("SW1") >= 0, v);
-  ok("show version 含神州数码", v.indexOf("神州数码") >= 0, v);
+  ok("show version 含 Digital China", v.indexOf("Digital China") >= 0, v);
   ok("show version 含 uptime", v.indexOf("uptime") >= 0, v);
   ok("show version 含系统镜像", v.indexOf("nos.img") >= 0, v);
   ok("show version 含配置寄存器", v.indexOf("config-register") >= 0 || v.indexOf("Configuration register") >= 0, v);
   const d = CLI.execLine(c, "show device-info").output;
   ok("device-info 含设备名", d.indexOf("SW1") >= 0, d);
-  ok("device-info 含端口数", d.indexOf("端口总数") >= 0, d);
-  ok("device-info 含 MAC 地址", d.indexOf("MAC 地址") >= 0, d);
+  ok("device-info 含端口数", d.indexOf("Ports") >= 0, d);
+  ok("device-info 含 MAC 地址", d.indexOf("MAC address") >= 0, d);
   ok("device-info 含设备型号", d.indexOf("DCS-") >= 0, d);
 }
 
@@ -76,7 +76,7 @@ console.log("\n===== 2. 日志（syslog）=====");
   ok("非法日志级别被拒", bad.out[0].output.indexOf("emergencies") >= 0, bad.out[0].output);
   // 非法 IP
   const bad2 = run(sw, ["@global", "logging host 999.1.1.1"]);
-  ok("非法日志服务器 IP 被拒", bad2.out[0].output.indexOf("用法") >= 0, bad2.out[0].output);
+  ok("非法日志服务器 IP 被拒", bad2.out[0].output.indexOf("Usage:") >= 0, bad2.out[0].output);
   // 关闭
   run(sw, ["@global", "no logging"]);
   ok("no logging 关闭", sw.logging.enabled === false && sw.logging.servers.length === 0);
@@ -158,7 +158,7 @@ console.log("\n===== 6. 用户与特权级 =====");
   ok("show users 显示特权级", t.indexOf("15") >= 0, t);
   // 越界特权级
   const bad = run(sw, ["@global", "username x privilege 99 0 p"]);
-  ok("越界特权级被拒", bad.out[0].output.indexOf("0~15") >= 0, bad.out[0].output);
+  ok("越界特权级被拒", bad.out[0].output.indexOf("0-15") >= 0, bad.out[0].output);
 }
 
 console.log("\n===== 7. 横幅与配置寄存器 =====");

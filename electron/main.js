@@ -74,7 +74,7 @@ function createWindow() {
           click: () => dialog.showMessageBox(win, {
             type: "info",
             title: "关于",
-            message: "DCN网络模拟器 v1.0.0",
+            message: "DCN网络模拟器 v1.4.0",
             detail: "神州数码指令仿真（对标 Packet Tracer），指令严格按课程 PPT / 实验报告。\n支持命令缩写、TAB 补全、? 联想。"
           })
         }

@@ -171,7 +171,7 @@ console.log("\n===== 4. 缩写歧义必须被识别而非静默误判 =====");
     // sh por 存在真实歧义（port-security / port-isolate），报歧义才是正确行为
     ["sh por", "歧义|port-security|port-isolate"],
     ["sh por-sec", "Secure Port|port-security|歧义"],
-    ["sh port-is", "隔离|Isolat|歧义"],
+    ["sh port-is", "Port isolation|Isolat|Ambiguous"],
     ["sh mon", "monitor|Session|无"],
     ["sh span", "生成树|Spanning|Bridge|Root|%"],
     ["sh dhcp s", "Snooping"], ["sh igm s", "IGMP"],

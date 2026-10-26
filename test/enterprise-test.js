@@ -173,7 +173,7 @@ console.log("\n===== 5. QoS priority =====");
   ok("prio 6 = network control", t.indexOf("网络控制") >= 0, t);
   ok("prio 3 = voice", t.indexOf("语音") >= 0, t);
   const bad = run(mkSwitch("SW2"), ["@global", "interface e1/0/1", "switchport priority 9"]);
-  ok("out-of-range rejected", bad.out[1].output.indexOf("0~7") >= 0, bad.out[1].output);
+  ok("out-of-range rejected", bad.out[1].output.indexOf("0-7") >= 0, bad.out[1].output);
 }
 
 console.log("\n===== 6. Loop Guard =====");
@@ -334,9 +334,9 @@ console.log("\n===== 13. Friendly output when disabled =====");
     const r = CLI.execLine(ctx, pair[0]);
     ok(pair[0] + " shows " + pair[1], r.output.indexOf(pair[1]) >= 0, r.output);
   });
-  ok("sh port-is hint", CLI.execLine(ctx, "sh port-is").output.indexOf("端口隔离") >= 0);
-  ok("sh qos p hint", CLI.execLine(ctx, "sh qos p").output.indexOf("优先级") >= 0);
-  ok("sh mac-address s hint", CLI.execLine(ctx, "sh mac-address s").output.indexOf("静态 MAC") >= 0);
+  ok("sh port-is hint", CLI.execLine(ctx, "sh port-is").output.indexOf("Port isolation") >= 0);
+  ok("sh qos p hint", CLI.execLine(ctx, "sh qos p").output.indexOf("Port priority") >= 0);
+  ok("sh mac-address s hint", CLI.execLine(ctx, "sh mac-address s").output.indexOf("static MAC") >= 0);
   ok("sh mac a not ambiguous", CLI.execLine(ctx, "sh mac a").output.indexOf("歧义") < 0, CLI.execLine(ctx, "sh mac a").output);
 }
 

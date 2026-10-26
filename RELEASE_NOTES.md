@@ -1,4 +1,39 @@
-## Digital China DCN Network Simulator v1.3.0
+## Digital China DCN Network Simulator v1.4.0
+
+Command-line feedback, English diagnostics and laboratory address pre-configuration.
+
+### Download
+
+- `DCN-Network-Simulator-1.4.0-portable.exe` — single-file portable build for Windows 64-bit
+
+### What's new in 1.4.0
+
+- **VLAN feedback**: creating a VLAN prints `VLAN 10 created.`; adding ports answers port by port
+  (`Port e1/0/1 added to VLAN 10.`) in both places it can be done — interface mode
+  (`switchport access vlan 10`, including ranges) and VLAN mode (`switchport interface e1/0/1`, comma/semicolon lists).
+- **English diagnostics**: about 70 error, usage and empty-state messages were translated from Chinese
+  (`% Unknown command. Type ? for help.`, `% Invalid port. Example: ...`, `% Ambiguous command: ...`,
+  broadcast-storm explanations, ACL / DHCP / route-map / OSPF usage lines and empty-state `show` output).
+- **Laboratory address pre-configuration**: loading a lab now seeds every PC with the address from the
+  course report, so `ipconfig` shows IP / subnet mask / gateway immediately. Labs 12–16 share the
+  NET1216 plan (192.168.1.11–.12, 192.168.0.1, 192.168.20.x, 192.168.30.x).
+- **VLAN default names**: new VLANs are auto-named (`default` for VLAN 1, `VLAN0010` style otherwise)
+  and appear in `show vlan`.
+- **`ipconfig`**: always prints IP address, subnet mask and gateway.
+- **`show interface`**: now a real per-port report — description, MAC, access/trunk mode with PVID and
+  VLAN name, duplex/speed/flow-control, spanning-tree state and counters; `show interface` without a
+  port lists every port, and the duplicated `trunk trunk` label is fixed.
+- **English `show` output**: `show version`, `show device-info`, `show clock`, `show vtp` and
+  `show ip rip` no longer contain Chinese text.
+
+### Verification
+
+- `node src/run-tests.js` → 23 passed / 0 failed
+- `node ../simtest/run-dcn-tests.js` → 1250 passed / 0 failed across 37 test files (new `test/dcn-feedback-test.js`, 29 checks)
+- `node ../simtest/dcn-audit-cycle1.js` / `dcn-audit-cycle2.js` / `dcn-audit-lab-ips.js` → all clean
+- Portable build `DCN-Network-Simulator-1.4.0-portable.exe`, `--selftest` all green
+
+## Digital China DCN Network Simulator v1.3.0（历史版本）
 
 A Packet Tracer-style network simulator for the "Digital China (神州数码) DCN" device family.
 All commands, prompts and parameter values follow the course PPT slides and laboratory reports verbatim.
@@ -104,8 +139,25 @@ Interface icons are derived from [Lucide](https://lucide.dev) (ISC License).
 ---
 
 <a name="中文说明"></a>
+## 神州数码 DCN 网络模拟器 v1.4.0
 
-## 神州数码 DCN 网络模拟器 v1.3.0
+本版聚焦「敲完命令有反馈、报错看得懂、实验一载入就能通」：
+
+- **VLAN 生效反馈**：`vlan 10` 回车后回显 `VLAN 10 created.`；两条加端口路径都会逐口回显
+  `Port e1/0/1 added to VLAN 10.` —— 接口模式 `switchport access vlan 10`（支持 `int e1/0/1-4` 范围）
+  与 VLAN 模式 `switchport interface e1/0/1`（支持 `;`、`,` 列表）；非法端口回 `% Invalid port: xxx`。
+- **报错与用法全部英文**：约 70 条中文提示换成英文（未知命令、端口不存在、模式误用、参数越界、
+  ACL / DHCP / route-map / OSPF 用法行、`show` 空态、广播风暴解释等），便于和真实设备/考题对照。
+- **载入实验自动配好电脑 IP**：按实验报告写入每台 PC 的 `ipconfig`（IP / 子网掩码 / 网关），
+  双击电脑直接能 ping；lab12–16 共用 NET1216 地址规划。
+- **VLAN 自动命名**：VLAN 1 为 `default`，其余 `VLAN0010` 四位补零。
+- **`ipconfig`** 固定输出 IP / 子网掩码 / 网关三行。
+
+验证：`node src/run-tests.js` 23 通过；`simtest/run-dcn-tests.js` 1245 通过（37 个测试文件）；打包 exe 自检全绿。
+
+---
+
+## 神州数码 DCN 网络模拟器 v1.3.0（历史版本）
 
 面向神州数码 DCN 设备系列的网络实验模拟器，交互形态参照思科 Packet Tracer。
 全部命令、提示符与参数取值严格对照本课程 PPT 与实验报告。

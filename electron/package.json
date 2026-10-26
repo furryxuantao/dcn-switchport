@@ -1,6 +1,6 @@
 {
   "name": "dcn-simulator",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Digital China DCN network simulator (Packet Tracer-like, CLI aligned with the course PPT and lab reports)",
   "author": "furryxuantao",
   "license": "MIT",

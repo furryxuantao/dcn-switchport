@@ -75,9 +75,9 @@ console.log("\n===== 1. ACL 配置与显示 =====");
   // 编号越界
   const sw = Sim.createDevice("l2", "SW3", 0, 0);
   const { out } = run(sw, ["@global", "ip access-list extended 0"]);
-  ok("ACL 编号 0 被拒", out[0].output.indexOf("1-1999") >= 0, out[0].output);
+  ok("ACL 编号 0 被拒", out[0].output.indexOf("out of range") >= 0, out[0].output);
   const { out: o2 } = run(sw, ["@global", "ip access-list extended 5000"]);
-  ok("ACL 编号 5000 被拒", o2[0].output.indexOf("1-1999") >= 0, o2[0].output);
+  ok("ACL 编号 5000 被拒", o2[0].output.indexOf("out of range") >= 0, o2[0].output);
 }
 
 console.log("\n===== 2. ACL 真实阻断流量 =====");

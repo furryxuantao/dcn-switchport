@@ -70,7 +70,7 @@ function run(ctx, ...cmds) {
   t("show ip int brief 显示 vlan1 管理IP", /192\.168\.1\.100/.test(o), o);
 
   o = run(ctx, "show interface e1/0/1");
-  t("show int e1/0/1 显示 access vlan 10", /access vlan 10/.test(o), o);
+  t("show int e1/0/1 显示 access vlan 10", /Port mode: access, PVID: 10/.test(o), o);
   o = run(ctx, "show interface e1/0/24");
   t("show int e1/0/24 显示 trunk", /trunk/.test(o), o);
 
@@ -98,7 +98,7 @@ function run(ctx, ...cmds) {
   // 缩写
   o = run(ctx, "sh vlan"); t("缩写 sh vlan", /hardware/.test(o), o);
   o = run(ctx, "sh run"); t("缩写 sh run", /hostname/.test(o), o);
-  o = run(ctx, "sh int e1/0/1"); t("缩写 sh int", /access vlan 10/.test(o), o);
+  o = run(ctx, "sh int e1/0/1"); t("缩写 sh int", /Port mode: access, PVID: 10/.test(o), o);
   o = run(ctx, "sh mac"); t("缩写 sh mac", /Mac Address/.test(o), o);
   o = run(ctx, "sho vlan"); t("缩写 sho vlan", /hardware/.test(o), o);
 
@@ -120,7 +120,7 @@ function run(ctx, ...cmds) {
 
   // 未知命令
   o = run(ctx, "show foobar");
-  t("未知 show 子命令有提示", /未知|歧义|未知show/.test(o), o);
+  t("未知 show 子命令有提示", /Unknown show|Ambiguous/.test(o), o);
 })();
 
 /* ---------- 2. 端口安全 / 聚合 / 镜像 关联 ---------- */
@@ -277,7 +277,7 @@ function run(ctx, ...cmds) {
   let r = CLI.execLine(c2, "enable");
   ok(r.needSecret === true, "有密码时 enable 要求输入密码", r.output);
   let r2 = CLI.execLine(c2, "wrong");
-  ok(/密码错误/.test(r2.output), "错误密码被拒");
+  ok(/Invalid password/.test(r2.output), "错误密码被拒");
   // 重新 enable 再输正确密码
   CLI.execLine(c2, "enable");
   CLI.execLine(c2, "secret");

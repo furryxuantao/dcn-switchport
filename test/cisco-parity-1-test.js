@@ -278,7 +278,7 @@ console.log("\n===== 9. show interfaces trunk =====");
   ok("含允许 VLAN", t.indexOf("10,20") >= 0 || t.indexOf("10;20") >= 0, t);
   const sw2 = Sim.createDevice("l2", "SW2", 0, 0);
   const c2 = ctxOf(sw2); c2.sess.mode = "priv";
-  ok("无 trunk 时友好提示", CLI.execLine(c2, "show interfaces trunk").output.indexOf("没有 trunk") >= 0);
+  ok("无 trunk 时友好提示", CLI.execLine(c2, "show interfaces trunk").output.indexOf("No trunk interfaces") >= 0);
 }
 
 console.log("\n===== 10. 生成树计时器 =====");

@@ -67,7 +67,7 @@ console.log("\n===== 1. NAT 配置 =====");
   // 非法地址池被拒
   const r = Sim.createDevice("router", "R2", 0, 0);
   const { out } = run(r, ["@global", "ip nat pool P 999.1.1.1 999.1.1.5"]);
-  ok("非法地址池 IP 被拒", out[0].output.indexOf("IP 格式错误") >= 0, out[0].output);
+  ok("非法地址池 IP 被拒", out[0].output.indexOf("Invalid address-pool IP") >= 0, out[0].output);
 }
 
 console.log("\n===== 2. NAT 真实转换 =====");
@@ -138,7 +138,7 @@ console.log("\n===== 3. 策略路由 route-map =====");
 {
   const r = Sim.createDevice("router", "R2", 0, 0);
   const c = ctxOf(r); c.sess.mode = "priv";
-  ok("未配置时提示", CLI.execLine(c, "show route-map").output.indexOf("未配置") >= 0);
+  ok("未配置时提示", CLI.execLine(c, "show route-map").output.indexOf("No route-map configured") >= 0);
 }
 
 console.log("\n===== 4. 二层环路检测 =====");

@@ -100,7 +100,7 @@ console.log("\n===== 2. DHCP 中继（ip helper-address）=====");
   // 非法 IP 被拒
   const sw = Sim.createDevice("l3", "SW2", 0, 0);
   const { out } = run(sw, ["@global", "ip helper-address 999.999.999.999"]);
-  ok("非法 helper 地址被拒", out[0].output.indexOf("用法") >= 0, out[0].output);
+  ok("非法 helper 地址被拒", out[0].output.indexOf("Usage:") >= 0, out[0].output);
 }
 
 console.log("\n===== 3. 代理 ARP =====");
@@ -183,7 +183,7 @@ console.log("\n===== 6. show ip interface / ip route static =====");
   ok("含下一跳", t2.indexOf("10.0.0.2") >= 0, t2);
   const r2 = Sim.createDevice("router", "R2", 0, 0);
   const c2 = ctxOf(r2); c2.sess.mode = "priv";
-  ok("无静态路由时提示", CLI.execLine(c2, "show ip route static").output.indexOf("无静态路由") >= 0);
+  ok("无静态路由时提示", CLI.execLine(c2, "show ip route static").output.indexOf("No static routes") >= 0);
 }
 
 console.log("\n===== 7. 默认路由显示 =====");

@@ -299,7 +299,10 @@ function createDevice(type, name, x, y) {
 // ---------- VLAN 操作 ----------
 function ensureVlan(dev, id) {
   id = String(id);
-  if (!dev.vlans[id]) dev.vlans[id] = { id: parseInt(id, 10), name: "", members: [] };
+  if (!dev.vlans[id]) {
+    var _vid = parseInt(id, 10);
+    dev.vlans[id] = { id: _vid, name: _vid === 1 ? "default" : "VLAN" + ("0000" + _vid).slice(-4), members: [] };
+  }
   return dev.vlans[id];
 }
 function setAccessVlan(dev, portName, vlanId) {
@@ -1024,7 +1027,7 @@ function aclDecide(dev, pkt, inPort) {
 function showAcl(dev) {
   var lists = (dev.acl && dev.acl.lists) || {};
   var ids = Object.keys(lists);
-  if (!ids.length) return "% 未配置 ACL（配置示例：ip access-list extended 10 / permit ip 192.168.1.0 0.0.0.255 any / deny ip any any）";
+  if (!ids.length) return "% No ACL configured. Example: ip access-list extended 10 / permit ip 192.168.1.0 0.0.0.255 any / deny ip any any";
   var L = [];
   ids.sort(function (a, b) { return parseInt(a, 10) - parseInt(b, 10); });
   ids.forEach(function (id) {
@@ -1410,7 +1413,7 @@ function diagnoseFail(allDevices, links, srcDev, dstIp, stpInfo) {
     // 目标可能是未建模的IP（如外网），检查路由
     if (srcDev.type === "router" || srcDev.type === "l3") {
       var rt = routeLookup(srcDev, dstIp, allDevices, links);
-      if (!rt) return "无路由（需配置静态/默认/RIP/OSPF）";
+      if (!rt) return "No route (configure static / default / RIP / OSPF)";
     }
     return "目标不可达（目标IP不存在或无路由）";
   }
@@ -1891,7 +1894,7 @@ function showIgmpSnooping(dev) {
   L.push("IGMP Version  : " + dev.igmpSnooping.version);
   if (!dev.igmpSnooping.enabled) return L.join("\n");
   var vks = Object.keys(dev.igmpSnooping.groups);
-  if (!vks.length) { L.push(""); L.push("% 组播表为空（尚无 IGMP 报文）"); return L.join("\n"); }
+  if (!vks.length) { L.push(""); L.push("% Multicast table is empty (no IGMP traffic yet)."); return L.join("\n"); }
   L.push("");
   L.push("VLAN   Group Address        Ports                          Version");
   vks.forEach(function (v) {
@@ -1956,7 +1959,7 @@ function showPortIsolate(dev) {
     if (g) { if (!groups[g]) groups[g] = []; groups[g].push(pn); }
   });
   var ks = Object.keys(groups);
-  if (!ks.length) return "% 端口隔离未配置（switchport isolate group N 开启）";
+  if (!ks.length) return "% Port isolation not configured (use switchport isolate group N).";
   var L = ["Port Isolation Groups:", ""];
   ks.forEach(function (g) {
     L.push("  Group " + g + " : " + groups[g].map(portLabel).join(", "));
@@ -1968,7 +1971,7 @@ function showPortIsolate(dev) {
 // --- QoS 优先级 ---
 function showQosPriority(dev) {
   var ks = Object.keys(dev.ports).filter(function (p) { return dev.ports[p].qosPrio; });
-  if (!ks.length) return "% 未配置端口优先级（switchport priority N）";
+  if (!ks.length) return "% Port priority not configured (use switchport priority N).";
   var L = ["Port                Priority  Description"];
   ks.forEach(function (pn) {
     var p = dev.ports[pn].qosPrio;
@@ -1981,8 +1984,8 @@ function showQosPriority(dev) {
 // --- 环路保护 Loop Guard ---
 function showLoopGuard(dev) {
   var ks = Object.keys(dev.ports).filter(function (p) { return dev.ports[p].loopGuard; });
-  if (!dev.loopGuard.enabled) return "% Loop Guard : disabled（全局 switchport loop-guard enable）";
-  if (!ks.length) return "Loop Guard : enabled\n% 尚未指定受保护端口（接口下 loop-guard enable）";
+  if (!dev.loopGuard.enabled) return "% Loop Guard : disabled (enable with switchport loop-guard enable).";
+  if (!ks.length) return "Loop Guard : enabled\n% No protected ports configured yet (run loop-guard enable under the interface).";
   return "Loop Guard : enabled\n受保护端口 : " + ks.map(portLabel).join(", ") +
     "\n  接入口收到 BPDU 将被自动 shutdown，防止误接形成环路";
 }
@@ -1990,7 +1993,7 @@ function showLoopGuard(dev) {
 // --- 静态 MAC / 表项上限 / 老化时间 ---
 function showStaticMac(dev) {
   var ks = Object.keys(dev.staticMac).filter(function (p) { return dev.staticMac[p].length; });
-  if (!ks.length) return "% 无静态 MAC 绑定（mac-address static X 接口 Y）";
+  if (!ks.length) return "% No static MAC bindings (use mac-address static <mac> interface <port>).";
   var L = ["Port                 MAC Address"];
   ks.forEach(function (pn) {
     dev.staticMac[pn].forEach(function (m) {
@@ -2122,7 +2125,7 @@ function vrrpVirtualIp(allDevices, links, vrid) {
 function showVrrp(dev, allDevices, links) {
   var groups = (dev.vrrp && dev.vrrp.groups) || {};
   var ids = Object.keys(groups);
-  if (!ids.length) return "% 未配置 VRRP（配置示例：interface vlan 10 / vrrp 1 ip 192.168.1.254 / vrrp 1 priority 120）";
+  if (!ids.length) return "% No VRRP configured. Example: interface vlan 10 / vrrp 1 ip 192.168.1.254 / vrrp 1 priority 120";
   var L = [];
   ids.sort(function (a, b) { return parseInt(a, 10) - parseInt(b, 10); }).forEach(function (id) {
     var g = groups[id];
@@ -2199,7 +2202,7 @@ function showDhcpPool(dev) {
 function showDhcpBinding(dev) {
   var binds = (dev.dhcp && dev.dhcp.bindings) || {};
   var ks = Object.keys(binds);
-  if (!ks.length) return "% 无 DHCP 绑定（客户端申请地址后出现）";
+  if (!ks.length) return "% No DHCP bindings (they appear after a client gets a lease).";
   var L = ["IP Address       MAC Address        Lease  Pool"];
   ks.forEach(function (m) {
     var b = binds[m];
@@ -2259,7 +2262,7 @@ function showVtp(dev, allDevices) {
   var ids = Object.keys(v.config || {});
   L.push("VLAN ID   Name                 Status");
   L.push("-------- -------------------- ---------");
-  if (!ids.length) L.push("  （本机无 VTP 发布的 VLAN）");
+  if (!ids.length) L.push("  (no VLANs in the VTP database)");
   ids.sort(function (a, b) { return parseInt(a, 10) - parseInt(b, 10); }).forEach(function (vid) {
     var c = v.config[vid];
     L.push("  " + String(vid).padEnd(9, " ") + String(c.name || "").padEnd(21, " ") + (c.active === false ? "suspended" : "active"));
@@ -2372,7 +2375,7 @@ function showInterfacesStatus(dev) {
 // 思科式 show interfaces trunk
 function showInterfacesTrunk(dev) {
   var trunks = Object.keys(dev.ports).filter(function (pn) { return dev.ports[pn].mode === "trunk"; });
-  if (!trunks.length) return "% 没有 trunk 接口";
+  if (!trunks.length) return "% No trunk interfaces.";
   var L = ["Port        Mode         Encapsulation  Status        Native vlan"];
   L.push("---------- ----------- --------------- -------------- ------------");
   trunks.forEach(function (pn) {
@@ -2473,7 +2476,7 @@ function showRip(dev) {
   L.push("  Interface        Send  Recv  Key-chain");
   L.push("  ---------------  ----  ----  ---------");
   var ks = Object.keys(r.enabledIfs || {});
-  if (!ks.length) L.push("  （无使能接口）");
+  if (!ks.length) L.push("  (no interfaces enabled)");
   ks.forEach(function (pn) {
     L.push("  " + portLabel(pn).padEnd(16, " ") + "yes   yes   " +
       (r.passiveIfs && r.passiveIfs[pn] ? "(passive)" : ""));
@@ -2524,15 +2527,17 @@ function showVersion(dev) {
   var d = Math.floor(up / 86400), h = Math.floor((up % 86400) / 3600),
     m = Math.floor((up % 3600) / 60), s = up % 60;
   var L = [];
-  L.push("神州数码 " + (dev.system.platform || "DCS-3926S") + " 网络交换机");
+  L.push("Digital China " + (dev.system.platform || "DCS-3926S") + " Network Switch");
+  L.push("Copyright (c) 2000-2011 Digital China Networks Limited. All rights reserved.");
   L.push("Device name: " + dev.hostname);
+  L.push("Device model: " + (dev.system.platform || "DCS-3926S"));
   L.push("System image file is \"flash:/nos.img\"");
   L.push("System version: " + (dev.system.osVersion || "3.0.5"));
   L.push("Processor board ID: " + (dev.mac || "0000.0000.0000"));
   L.push("");
   L.push(" uptime is " + d + " days, " + h + " hours, " + m + " minutes, " + s + " seconds");
   L.push("System returned to ROM by reload");
-  L.push("System restarted at " + new Date(dev.system.uptimeStart || Date.now()).toLocaleString("zh-CN"));
+  L.push("System restarted at " + new Date(dev.system.uptimeStart || Date.now()).toISOString().slice(0, 19).replace("T", " ") + " UTC");
   L.push("");
   L.push("System image file is \"flash:/nos.img\"");
   L.push("Configuration register is " + (dev.configRegister || "0x102"));
@@ -2541,27 +2546,28 @@ function showVersion(dev) {
 // 设备信息一览
 function showDeviceInfo(dev) {
   var L = [];
-  L.push("设备名称        : " + dev.hostname);
-  L.push("设备类型        : " + ({ l2: "二层交换机", l3: "三层交换机", router: "路由器", pc: "主机" }[dev.type] || dev.type));
-  L.push("系统版本        : " + (dev.system.osVersion || "3.0.5"));
-  L.push("设备型号        : " + (dev.system.platform || "DCS-3926S"));
-  L.push("MAC 地址        : " + dev.mac);
-  L.push("端口总数        : " + Object.keys(dev.ports).length);
-  L.push("VLAN 数量       : " + Object.keys(dev.vlans).length);
-  L.push("MAC 地址表      : " + Object.keys(dev.macTable).length + " 条");
-  L.push("生成树          : " + (dev.stp.enabled ? "已开启（" + dev.stp.mode + "）" : "未开启"));
-  L.push("Telnet 服务     : " + (dev.telnet.enabled ? "开启" : "关闭"));
-  L.push("SSH 服务        : " + (dev.ssh.enabled ? "开启" : "关闭"));
-  L.push("SNMP Agent      : " + (dev.snmp.enabled ? "开启" : "关闭"));
-  L.push("SNMPv3          : " + (dev.snmpv3.enabled ? "开启" : "关闭"));
-  L.push("AAA             : " + (dev.aaa.enabled ? "开启（" + dev.aaa.protocol + "）" : "关闭"));
-  L.push("日志服务器      : " + (dev.logging.enabled && dev.logging.servers.length ? dev.logging.servers.join(", ") : "未配置"));
-  L.push("NTP             : " + (dev.ntp.enabled ? "开启" : "关闭"));
-  L.push("时区            : UTC" + (dev.clock.timezone >= 0 ? "+" : "") + dev.clock.timezone);
-  L.push("ACL 数量        : " + Object.keys((dev.acl && dev.acl.lists) || {}).length);
-  L.push("静态路由        : " + (dev.staticRoutes || []).length + " 条");
-  L.push("VRRP 组         : " + Object.keys((dev.vrrp && dev.vrrp.groups) || {}).length);
-  L.push("已登录用户      : " + (dev.users || []).length + " 个");
+  var onOff = function (v) { return v ? "enabled" : "disabled"; };
+  L.push("Device name     : " + dev.hostname);
+  L.push("Device type     : " + ({ l2: "Layer-2 switch", l3: "Layer-3 switch", router: "Router", pc: "Host" }[dev.type] || dev.type));
+  L.push("System version  : " + (dev.system.osVersion || "3.0.5"));
+  L.push("Device model    : " + (dev.system.platform || "DCS-3926S"));
+  L.push("MAC address     : " + dev.mac);
+  L.push("Ports           : " + Object.keys(dev.ports).length);
+  L.push("VLANs           : " + Object.keys(dev.vlans).length);
+  L.push("MAC entries     : " + Object.keys(dev.macTable).length);
+  L.push("Spanning tree   : " + (dev.stp.enabled ? "enabled (" + dev.stp.mode + ")" : "disabled"));
+  L.push("Telnet server   : " + onOff(dev.telnet.enabled));
+  L.push("SSH server      : " + onOff(dev.ssh.enabled));
+  L.push("SNMP agent      : " + onOff(dev.snmp.enabled));
+  L.push("SNMPv3          : " + onOff(dev.snmpv3.enabled));
+  L.push("AAA             : " + (dev.aaa.enabled ? "enabled (" + dev.aaa.protocol + ")" : "disabled"));
+  L.push("Log hosts       : " + (dev.logging.enabled && dev.logging.servers.length ? dev.logging.servers.join(", ") : "none"));
+  L.push("NTP             : " + onOff(dev.ntp.enabled));
+  L.push("Time zone       : UTC" + (dev.clock.timezone >= 0 ? "+" : "") + dev.clock.timezone);
+  L.push("ACLs            : " + Object.keys((dev.acl && dev.acl.lists) || {}).length);
+  L.push("Static routes   : " + (dev.staticRoutes || []).length);
+  L.push("VRRP groups     : " + Object.keys((dev.vrrp && dev.vrrp.groups) || {}).length);
+  L.push("Logged-in users : " + (dev.users || []).length);
   return L.join("\n");
 }
 // 系统日志
@@ -2587,10 +2593,10 @@ function showClock(dev) {
   var now = new Date();
   var local = new Date(now.getTime() + c.timezone * 3600000);
   var L = [];
-  L.push("*" + local.toTimeString().slice(0, 8) + " UTC " + (c.timezone >= 0 ? "+" : "") + c.timezone);
-  L.push("Time source is NTP" + (dev.ntp && dev.ntp.enabled ? "（已同步）" : "（未配置，视为手工设置）"));
+  L.push("*" + local.toTimeString().slice(0, 8) + " UTC" + (c.timezone >= 0 ? "+" : "") + c.timezone + " " + local.toISOString().slice(0, 10));
+  L.push("Time source is NTP " + (dev.ntp && dev.ntp.enabled ? "(synchronized)" : "(not configured; manual setting)"));
   if (dev.ntp && dev.ntp.servers && dev.ntp.servers.length) {
-    L.push("  NTP 服务器: " + dev.ntp.servers.join(", "));
+    L.push("  NTP server: " + dev.ntp.servers.join(", "));
   }
   return L.join("\n");
 }
@@ -2620,7 +2626,7 @@ function showAaa(dev) {
 // 用户列表（思科式分级）
 function showUsers(dev) {
   var us = dev.users || [];
-  if (!us.length) return "% 未配置本地用户";
+  if (!us.length) return "% No local users configured.";
   var L = [];
   L.push("    Username       Privilege  Password");
   L.push("    -------------- ---------- ----------");
@@ -2733,7 +2739,7 @@ function showNat(dev) {
 function showRouteMap(dev) {
   var maps = (dev.pbr && dev.pbr.routeMaps) || {};
   var names = Object.keys(maps);
-  if (!names.length) return "% 未配置 route-map（策略路由）";
+  if (!names.length) return "% No route-map configured (policy routing).";
   var L = [];
   names.forEach(function (nm) {
     var m = maps[nm];

@@ -488,7 +488,7 @@ function execLine(ctx, rawLine) {
       }
     }
     if (!pool.length) {
-      return { output: "% 未知命令，输入 ? 查看本模式命令", prompt: promptFor(dev, sess) };
+      return { output: "% Unknown command. Type ? for a list of commands.", prompt: promptFor(dev, sess) };
     }
     return { output: pool.join("\n"), prompt: promptFor(dev, sess) };
   }
@@ -496,7 +496,7 @@ function execLine(ctx, rawLine) {
   var low = line.toLowerCase();
 
   function needPriv() {
-    if (sess.mode === "user" || sess.mode === "pc") return "% 需要先 enable 进入特权模式";
+    if (sess.mode === "user" || sess.mode === "pc") return "% Please enter privileged mode first (type enable).";
     return null;
   }
   function uniq(input, cands) {
@@ -512,13 +512,13 @@ function execLine(ctx, rawLine) {
     if ("ipconfig".indexOf(head) === 0) {
       var all = toks.length >= 2 && /^\/?a(ll)?$/i.test(toks[1]);
       if (all) {
-        return { output: "IP Address: " + (dev.pcIp || "(未配置)") + "\nSubnet Mask: " + (dev.pcMask || "-") + "\nGateway: " + (dev.pcGw || "-") + "\nMAC: " + dev.pcMac, prompt: promptFor(dev, sess) };
+        return { output: "IP Address: " + (dev.pcIp || "(not configured)") + "\nSubnet Mask: " + (dev.pcMask || "-") + "\nGateway: " + (dev.pcGw || "-") + "\nMAC: " + dev.pcMac, prompt: promptFor(dev, sess) };
       }
-      return { output: "IP Address: " + (dev.pcIp || "(未配置)") + "\nGateway: " + (dev.pcGw || "-"), prompt: promptFor(dev, sess) };
+      return { output: "IP Address: " + (dev.pcIp || "(not configured)") + "\nSubnet Mask: " + (dev.pcMask || "-") + "\nGateway: " + (dev.pcGw || "-"), prompt: promptFor(dev, sess) };
     }
     if ("ping".indexOf(head) === 0 && head.length >= 2) {
       var ip = toks[1];
-      if (!ip) return { output: "用法：ping <ip地址>", prompt: promptFor(dev, sess) };
+      if (!ip) return { output: "% Usage: ping <ip-address>", prompt: promptFor(dev, sess) };
       var res = ctx.ping(dev, ip);
       var T5 = 5;
       var hd = "正在 Ping " + ip + " [ " + ip + " ] 具有 32 字节的数据:";
@@ -526,7 +526,7 @@ function execLine(ctx, rawLine) {
         return {
           output: hd + "\n请求超时。\n请求超时。\n请求超时。\n请求超时。\n请求超时。\n" +
             Sim.pingStatsBlock(ip, { min: 0, avg: 0, max: 0 }, 0, T5) +
-            "\n% 广播风暴：二层环路未启用生成树，无法通信。请在交换机上开启 spanning-tree。",
+            "\n% Broadcast storm: a Layer-2 loop exists and spanning-tree is not running. Enable spanning-tree on the switches.",
           prompt: promptFor(dev, sess)
         };
       }
@@ -549,13 +549,13 @@ function execLine(ctx, rawLine) {
     }
     if ("tracert".indexOf(head) === 0 || "traceroute".indexOf(head) === 0) {
       var ip2 = toks[1];
-      if (!ip2) return { output: "用法： tracert <目标ip>", prompt: promptFor(dev, sess) };
+      if (!ip2) return { output: "% Usage: tracert <target-ip>", prompt: promptFor(dev, sess) };
       var tr = ctx.tracert(dev, ip2);
-      if (!tr.ok) return { output: "无法到达 " + ip2 + "： " + tr.reason, prompt: promptFor(dev, sess) };
+      if (!tr.ok) return { output: "% Destination unreachable: " + ip2 + "： " + tr.reason, prompt: promptFor(dev, sess) };
       var out = tr.hops.map(function (h, i) { return "  " + (i + 1) + "  " + h.dev + (h.via ? "  (" + h.via + ")" : ""); }).join("\n");
       return { output: "Tracing route to " + ip2 + "\n" + out, prompt: promptFor(dev, sess) };
     }
-    return { output: "% 未知命令（试试 ?）", prompt: promptFor(dev, sess) };
+    return { output: "% Unknown command. Type ? for help.", prompt: promptFor(dev, sess) };
   }
 
   // ===== 通用：exit / enable / config =====
@@ -576,9 +576,9 @@ function execLine(ctx, rawLine) {
     var list = (ctx.devices || []).map(function (x) { return x; });
     var tgt = list.filter(function (x) { return x.hostname === t2; })[0]
       || list.filter(function (x) { return x.hostname.toLowerCase() === t2.toLowerCase(); })[0];
-    if (!tgt) return { output: "% 设备不存在：" + t2, prompt: promptFor(dev, sess) };
+    if (!tgt) return { output: "% Device not found: " + t2, prompt: promptFor(dev, sess) };
     if (ctx.jump) ctx.jump(tgt);
-    return { output: "→ 切换到 " + tgt.hostname, prompt: promptFor(dev, sess) };
+    return { output: "→ Switching to " + tgt.hostname, prompt: promptFor(dev, sess) };
   }
   if (uniq(line, ["sessions"]) === "sessions") {
     var lines = ["当前终端：" + dev.hostname + "（" + dev.type + "）", ""];
@@ -604,7 +604,7 @@ function execLine(ctx, rawLine) {
     if (line === dev.enablePassword) { enterMode(sess, "priv"); sess.authed = true; return { output: "", prompt: promptFor(dev, sess) }; }
     // 密码错误后仍停留在 user 模式，允许重试 enable
     enterMode(sess, "user");
-    return { output: "% 密码错误", prompt: promptFor(dev, sess) };
+    return { output: "% Invalid password.", prompt: promptFor(dev, sess) };
   }
   // 改过 enable 密码后，旧的登录态失效，需重新输入
   if (/^enable\s+password/i.test(line) && dev.enablePassword) sess.authed = false;
@@ -651,11 +651,38 @@ function execLine(ctx, rawLine) {
     var hit = resolveAbbrev(rest, showCandObjs);
     var key = hit.length === 1 ? hit[0].raw : null;
     // 带参数的 show interface X / show int e1/0/1
-    if (/^int(erface)?$/i.test(r0) && restT.length >= 2) {
-      var pn = Sim.normalizePort(restT[1]);
-      if (!pn || !dev.ports[pn]) return { output: "% 端口不存在（例：e1/0/1, g0/0, s1/0）", prompt: promptFor(dev, sess) };
-      var p = dev.ports[pn], cfg = dev.ifIp[pn];
-      return { output: pn + " is " + (p.shutdown ? "down" : "up") + ", line protocol is " + (p.shutdown ? "down" : "up") + "\n  Mode: " + p.mode + (p.mode === "access" ? (" vlan " + p.accessVlan) : " trunk") + "\n  IP: " + (cfg && cfg.ip ? cfg.ip + " " + cfg.mask : "unassigned") + (cfg && cfg.clock ? "\n  Clock 64000 (DCE)" : ""), prompt: promptFor(dev, sess) };
+    if (/^int(erface)?$/i.test(r0)) {
+      var _fmtPort = function (pn) {
+        var p = dev.ports[pn], cfg = dev.ifIp[pn];
+        var _up = p.shutdown ? "down" : "up";
+        var _mode = p.mode === "trunk" ? "trunk" : "access";
+        var _pvid = _mode === "access" ? (p.accessVlan || 1) : (p.nativeVlan || 1);
+        var _vlanName = (dev.vlans && dev.vlans[String(_pvid)] && dev.vlans[String(_pvid)].name) || (String(_pvid) === "1" ? "default" : "VLAN" + ("0000" + _pvid).slice(-4));
+        var _duplex = p.duplex || "auto";
+        var _speed = p.speed || "auto";
+        var _flow = p.flow || "off";
+        var _stp = (dev.stp && dev.stp.enabled) ? ("enabled, state: " + (p.shutdown ? "disabled" : "forwarding")) : "disabled";
+        var _L = [];
+        _L.push(pn + " is " + _up + ", line protocol is " + _up);
+        var _desc = p.description || p.desc;
+        if (_desc) _L.push("  Description: " + _desc);
+        _L.push("  Hardware is Ethernet, MAC address is " + String(dev.mac || "").replace(/:/g, "-"));
+        _L.push("  Port mode: " + _mode + ", PVID: " + _pvid + ", VLAN: " + _pvid + " (" + _vlanName + ")");
+        _L.push("  Duplex: " + _duplex + ", Speed: " + _speed + ", Flow control: " + _flow);
+        _L.push("  Spanning tree: " + _stp);
+        _L.push("  IP: " + (cfg && cfg.ip ? cfg.ip + " " + cfg.mask : "unassigned"));
+        if (cfg && cfg.clock) _L.push("  Clock 64000 (DCE)");
+        _L.push("  Input : 0 packets, 0 errors, 0 discards");
+        _L.push("  Output: 0 packets, 0 errors, 0 discards");
+        return _L.join("\n");
+      };
+      if (restT.length >= 2) {
+        var pn = Sim.normalizePort(restT[1]);
+        if (!pn || !dev.ports[pn]) return { output: "% Invalid port. Example: e1/0/1, g0/0, s1/0.", prompt: promptFor(dev, sess) };
+        return { output: _fmtPort(pn), prompt: promptFor(dev, sess) };
+      }
+      var _all = Object.keys(dev.ports).map(_fmtPort).join("\n\n");
+      return { output: _all, prompt: promptFor(dev, sess) };
     }
     // show port-security [interface X]
     if (/^port-sec/i.test(r0)) {
@@ -666,8 +693,8 @@ function execLine(ctx, rawLine) {
       return { output: Sim.showPortSecurity(dev, fp), prompt: promptFor(dev, sess) };
     }
     if (!key) {
-      if (hit.length > 1) return { output: "% 歧义： " + hit.map(function (h) { return "show " + h.raw; }).join(" / "), prompt: promptFor(dev, sess) };
-      return { output: "% 未知show命令，输入 show ? 查看", prompt: promptFor(dev, sess) };
+      if (hit.length > 1) return { output: "% Ambiguous command: " + hit.map(function (h) { return "show " + h.raw; }).join(" / "), prompt: promptFor(dev, sess) };
+      return { output: "% Unknown show command. Type show ? for a list.", prompt: promptFor(dev, sess) };
     }
     if (key === "running-config" || key === "run") return { output: Sim.showRunningConfig(dev), prompt: promptFor(dev, sess) };
     if (key === "startup-config") return { output: dev.startupConfig || "This is first time start up system.", prompt: promptFor(dev, sess) };
@@ -702,7 +729,7 @@ function execLine(ctx, rawLine) {
       return { output: Sim.showInterfacesTrunk(dev), prompt: promptFor(dev, sess) };
     }
     if (key === "ip eigrp") {
-      return { output: "% 未配置 EIGRP（本模拟器支持 RIP / OSPF / 静态路由）", prompt: promptFor(dev, sess) };
+      return { output: "% EIGRP is not configured (this simulator supports RIP / OSPF / static routing).", prompt: promptFor(dev, sess) };
     }
     // ---- 三层增强 ----
     if (key === "ip interface") return { output: Sim.showIpInterfaceFull(dev, ctx.devices), prompt: promptFor(dev, sess) };
@@ -714,7 +741,7 @@ function execLine(ctx, rawLine) {
       const st = (dev.staticRoutes || []).map(r =>
         "      " + r.dest + " " + r.mask + " is directly connected, " + r.nextHop +
         (r.dist && r.dist !== 1 ? ", " + r.dist : ""));
-      return { output: st.length ? st.join("\n") : "% 无静态路由", prompt: promptFor(dev, sess) };
+      return { output: st.length ? st.join("\n") : "% No static routes.", prompt: promptFor(dev, sess) };
     }
     // ---- 设备管理与运维 ----
     if (key === "version") return { output: Sim.showVersion(dev), prompt: promptFor(dev, sess) };
@@ -771,7 +798,7 @@ function execLine(ctx, rawLine) {
     // 出厂：保留实现为重置动态状态（由UI层真正重置，这里给提示）
     ctx.factoryReset(dev);
     enterMode(sess, "priv");
-    return { output: "Set default OK. 请 write + reload 生效。", prompt: promptFor(dev, sess) };
+    return { output: "Set default OK. Run write and reload to apply.", prompt: promptFor(dev, sess) };
   }
   if (uniq(line, ["delete"]) === "delete" && sess.mode === "priv") {
     dev.startupConfig = null;
@@ -787,7 +814,7 @@ function execLine(ctx, rawLine) {
       return {
         output: head + "\n请求超时。\n请求超时。\n请求超时。\n请求超时。\n请求超时。\n" +
           Sim.pingStatsBlock(target, { min: 0, avg: 0, max: 0 }, 0, TOTAL) +
-          "\n% 广播风暴：二层环路未启用生成树，带宽被广播帧占满，无法通信。" +
+          "\n% Broadcast storm: a Layer-2 loop is flooding the segment with broadcast frames. Enable spanning-tree on the switches." +
           "\n  解决：在环路交换机上执行 spanning-tree 开启生成树。",
         prompt: promptFor(dev, sess)
       };
@@ -817,9 +844,9 @@ function execLine(ctx, rawLine) {
   }
   if (/^tracert\b/i.test(line) || (/^traceroute\b/i.test(line))) {
     var tip = toks[1];
-    if (!tip) return { output: "用法： tracert <目标ip>", prompt: promptFor(dev, sess) };
+    if (!tip) return { output: "% Usage: tracert <target-ip>", prompt: promptFor(dev, sess) };
     var tr2 = ctx.tracert(dev, tip);
-    if (!tr2.ok) return { output: "无法到达：" + tr2.reason, prompt: promptFor(dev, sess) };
+    if (!tr2.ok) return { output: "% Destination unreachable: " + tr2.reason, prompt: promptFor(dev, sess) };
     return { output: tr2.hops.map(function (h, i) { return "  " + (i + 1) + "  " + h.dev; }).join("\n"), prompt: promptFor(dev, sess) };
   }
   if (/^telnet\b/i.test(line) && toks.length >= 2 && "telnet".indexOf(toks[0].toLowerCase()) === 0) {
@@ -863,7 +890,7 @@ function execLine(ctx, rawLine) {
       dev.dhcpSnooping.enabled = true;
       if (pt("ip dhcp snooping vlan")) {
         var vl = parseVlanList(_pt[4] || "");
-        if (!vl) return { output: "% vlan列表格式如 10;20-30", prompt: promptFor(dev, sess) };
+        if (!vl) return { output: "% Invalid VLAN list. Example: 10;20-30.", prompt: promptFor(dev, sess) };
         var rate = (_pt[5] && /^r/i.test(_pt[5])) ? _pt[6] : "unlimited";
         vl.forEach(function (v) { dev.dhcpSnooping.perVlan[v] = { rate: rate, bindings: 0 }; });
       }
@@ -888,7 +915,7 @@ function execLine(ctx, rawLine) {
       dev.arpInspection.enabled = true;
       if (pt("ip arp inspection vlan") && _pt[4]) {
         var al = parseVlanList(_pt[4]);
-        if (!al) return { output: "% vlan列表格式如 10;20-30", prompt: promptFor(dev, sess) };
+        if (!al) return { output: "% Invalid VLAN list. Example: 10;20-30.", prompt: promptFor(dev, sess) };
         al.forEach(function (v) { dev.arpInspection.perVlan[v] = "enabled"; });
       }
       return { output: "", prompt: promptFor(dev, sess) };
@@ -911,8 +938,8 @@ function execLine(ctx, rawLine) {
       }
       var nm2 = S().normMac(_pt[2]);
       var pn2 = S().normalizePort(_pt[4] || "");
-      if (!nm2) return { output: "% MAC格式如 00-11-22-33-44-55", prompt: promptFor(dev, sess) };
-      if (!pn2 || !dev.ports[pn2]) return { output: "% 端口不存在", prompt: promptFor(dev, sess) };
+      if (!nm2) return { output: "% Invalid MAC address. Example: 00-11-22-33-44-55.", prompt: promptFor(dev, sess) };
+      if (!pn2 || !dev.ports[pn2]) return { output: "% Invalid port.", prompt: promptFor(dev, sess) };
       dev.staticMac[pn2] = dev.staticMac[pn2] || [];
       if (dev.staticMac[pn2].indexOf(nm2) < 0) dev.staticMac[pn2].push(nm2);
       dev.macTable[nm2] = { port: pn2, vlan: dev.ports[pn2].accessVlan || 1, age: 0, static: true };
@@ -939,7 +966,7 @@ function execLine(ctx, rawLine) {
     // debug mirror（课程 9.端口镜像 中出现）
     if (pt("debug mirror") && _pt.length <= 2) {
       var ids = Object.keys(dev.monitor);
-      if (!ids.length) return { output: "% No monitor session（先用 monitor session N source ...）", prompt: promptFor(dev, sess) };
+      if (!ids.length) return { output: "% No monitor session (configure monitor session N source ... first).", prompt: promptFor(dev, sess) };
       var dbg = ids.map(function (id) {
         var s = dev.monitor[id];
         return "  Session " + id + ": RX/TX from [" + s.sources.map(function (x) { return x.port; }).join(",") + "] to [" + (s.dest || "none") + "]";
@@ -957,7 +984,7 @@ function execLine(ctx, rawLine) {
     if (pt("ip helper-address")) {
       var gHelper = _pt[2];
       if (!gHelper || S().ipToInt(gHelper) === null) {
-        return { output: "% 用法：ip helper-address <DHCP服务器IP>", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: ip helper-address <dhcp-server-ip>", prompt: promptFor(dev, sess) };
       }
       if (!dev.ipHelper) dev.ipHelper = { enabled: false, servers: [], perIf: {} };
       dev.ipHelper.enabled = true;
@@ -973,10 +1000,10 @@ function execLine(ctx, rawLine) {
     if (pt("ip nat pool")) {
       var npName = _pt[3], npStart = _pt[4], npEnd = _pt[5];
       if (!npName || !npStart) {
-        return { output: "% 用法：ip nat pool <名> <起始IP> <结束IP>", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: ip nat pool <name> <start-ip> <end-ip>", prompt: promptFor(dev, sess) };
       }
       if (S().ipToInt(npStart) === null || (npEnd && S().ipToInt(npEnd) === null)) {
-        return { output: "% 地址池 IP 格式错误", prompt: promptFor(dev, sess) };
+        return { output: "% Invalid address-pool IP.", prompt: promptFor(dev, sess) };
       }
       dev.nat.enabled = true;
       dev.nat.pools[npName] = { name: npName, start: npStart, end: npEnd || npStart };
@@ -991,7 +1018,7 @@ function execLine(ctx, rawLine) {
     if (pt("route-map")) {
       if (!dev.pbr) dev.pbr = { routeMaps: {}, ipPolicy: null };
       var rmName = _pt[1], rmAction = _pt[2] || "permit", rmSeq = _pt[3] ? parseInt(_pt[3], 10) : 10;
-      if (!rmName) return { output: "% 用法：route-map <名> permit <序号>", prompt: promptFor(dev, sess) };
+      if (!rmName) return { output: "% Usage: route-map <name> permit <sequence>", prompt: promptFor(dev, sess) };
       if (!dev.pbr.routeMaps[rmName]) {
         dev.pbr.routeMaps[rmName] = { name: rmName, clauses: [] };
         sess.mode = "route-map";
@@ -1016,7 +1043,7 @@ function execLine(ctx, rawLine) {
     if (pt("logging host")) {
       var logIp = _pt[2];
       if (!logIp || S().ipToInt(logIp) === null) {
-        return { output: "% 用法：logging host <日志服务器IP>", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: logging host <syslog-server-ip>", prompt: promptFor(dev, sess) };
       }
       dev.logging.enabled = true;
       if (dev.logging.servers.indexOf(logIp) < 0) dev.logging.servers.push(logIp);
@@ -1026,7 +1053,7 @@ function execLine(ctx, rawLine) {
       var lvl = _pt[2] || _pt[3];
       var lvls = ["emergencies", "alerts", "critical", "errors", "warnings", "notifications", "informational", "debugging"];
       if (lvl && lvls.indexOf(String(lvl).toLowerCase()) < 0) {
-        return { output: "% 日志级别：" + lvls.join(" / "), prompt: promptFor(dev, sess) };
+        return { output: "% Invalid logging level: " + lvls.join(" / "), prompt: promptFor(dev, sess) };
       }
       if (lvl) dev.logging.consoleLevel = String(lvl).toLowerCase();
       dev.logging.enabled = true;
@@ -1043,18 +1070,18 @@ function execLine(ctx, rawLine) {
     // 时钟：clock timezone <区> / clock set hh:mm:ss
     if (pt("clock timezone")) {
       var tz = parseInt(_pt[2], 10);
-      if (isNaN(tz) || tz < -12 || tz > 14) return { output: "% 时区范围 -12 ~ +14", prompt: promptFor(dev, sess) };
+      if (isNaN(tz) || tz < -12 || tz > 14) return { output: "% Timezone out of range (-12 to +14).", prompt: promptFor(dev, sess) };
       dev.clock.timezone = tz;
       return { output: "", prompt: promptFor(dev, sess) };
     }
     if (pt("clock set")) {
-      return { output: "% 时钟已设置（仿真中按系统时间显示）", prompt: promptFor(dev, sess) };
+      return { output: "% Clock set (the simulator displays system time).", prompt: promptFor(dev, sess) };
     }
     // NTP：ntp server <ip> / ntp source
     if (pt("ntp server")) {
       var ntpIp = _pt[2];
       if (!ntpIp || S().ipToInt(ntpIp) === null) {
-        return { output: "% 用法：ntp server <NTP服务器IP>", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: ntp server <ntp-server-ip>", prompt: promptFor(dev, sess) };
       }
       dev.ntp.enabled = true;
       if (dev.ntp.servers.indexOf(ntpIp) < 0) dev.ntp.servers.push(ntpIp);
@@ -1084,7 +1111,7 @@ function execLine(ctx, rawLine) {
     if (pt("aaa group server")) {
       // aaa group server tacacs|radius <name>
       var sType = _pt[3], sName = _pt[4];
-      if (!sType || !sName) return { output: "% 用法：aaa group server <tacacs|radius> <组名>", prompt: promptFor(dev, sess) };
+      if (!sType || !sName) return { output: "% Usage: aaa group server <tacacs|radius> <group-name>", prompt: promptFor(dev, sess) };
       if (/^tacacs/i.test(sType)) dev.tacacs.enabled = true;
       else dev.radius.enabled = true;
       return { output: "", prompt: promptFor(dev, sess) };
@@ -1097,7 +1124,7 @@ function execLine(ctx, rawLine) {
     if (pt("tacacs-server host")) {
       var tacIp = _pt[2];
       if (!tacIp || S().ipToInt(tacIp) === null) {
-        return { output: "% 用法：tacacs-server host <IP> [key <密钥>]", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: tacacs-server host <ip> [key <secret>]", prompt: promptFor(dev, sess) };
       }
       dev.tacacs.enabled = true;
       if (dev.tacacs.servers.indexOf(tacIp) < 0) dev.tacacs.servers.push(tacIp);
@@ -1106,7 +1133,7 @@ function execLine(ctx, rawLine) {
     if (pt("radius-server host")) {
       var radIp = _pt[2];
       if (!radIp || S().ipToInt(radIp) === null) {
-        return { output: "% 用法：radius-server host <IP> [key <密钥>]", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: radius-server host <ip> [key <secret>]", prompt: promptFor(dev, sess) };
       }
       dev.radius.enabled = true;
       if (dev.radius.servers.indexOf(radIp) < 0) dev.radius.servers.push(radIp);
@@ -1158,7 +1185,7 @@ function execLine(ctx, rawLine) {
     if (pt("vtp mode")) {
       var vtMode = _pt[2];
       if (!/^(server|client|transparent|off)$/i.test(vtMode)) {
-        return { output: "% VTP 模式：server / client / transparent / off", prompt: promptFor(dev, sess) };
+        return { output: "% Invalid VTP mode. Use server / client / transparent / off.", prompt: promptFor(dev, sess) };
       }
       dev.vtp.enabled = !/^off$/i.test(vtMode);
       dev.vtp.mode = /^off$/i.test(vtMode) ? "server" : vtMode.toLowerCase();
@@ -1171,7 +1198,7 @@ function execLine(ctx, rawLine) {
     }
     if (pt("vtp version")) {
       var vv = parseInt(_pt[2], 10);
-      if (vv !== 1 && vv !== 2 && vv !== 3) return { output: "% VTP 版本支持 1/2/3", prompt: promptFor(dev, sess) };
+      if (vv !== 1 && vv !== 2 && vv !== 3) return { output: "% Unsupported VTP version. Use 1, 2 or 3.", prompt: promptFor(dev, sess) };
       dev.vtp.version = vv; dev.vtp.enabled = true;
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -1195,7 +1222,7 @@ function execLine(ctx, rawLine) {
       var lbNum2 = _pt[1], lbAlgo2 = (_pt[3] || "").toLowerCase();
       var lbOk2 = ["src-dst-ip", "src-dst-mac", "src-dst-port", "dst-ip", "dst-mac", "dst-port", "src-ip", "src-mac"];
       if (lbOk2.indexOf(lbAlgo2) < 0) {
-        return { output: "% 负载分担算法：" + lbOk2.join(" / "), prompt: promptFor(dev, sess) };
+        return { output: "% Invalid load-balance method: " + lbOk2.join(" / "), prompt: promptFor(dev, sess) };
       }
       if (!dev.portGroups[lbNum2]) dev.portGroups[lbNum2] = { mode: "on", ports: [] };
       dev.portGroups[lbNum2].loadBalance = lbAlgo2;
@@ -1239,10 +1266,10 @@ function execLine(ctx, rawLine) {
       var aclNum = _pt[3] !== undefined ? _pt[3] : _pt[2];
       var aclType = _pt[2] !== undefined && /^(s\w+|standard)$/i.test(_pt[2]) ? "standard" : "extended";
       if (aclNum === undefined || !/^\d+$/.test(String(aclNum))) {
-        return { output: "% 用法：ip access-list <standard|extended> <编号>", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: ip access-list <standard|extended> <number>", prompt: promptFor(dev, sess) };
       }
       if (parseInt(aclNum, 10) < 1 || parseInt(aclNum, 10) > 1999) {
-        return { output: "% ACL 编号范围 1-1999（1-99 标准，100-199 扩展，1000-1999 扩展）", prompt: promptFor(dev, sess) };
+        return { output: "% ACL number out of range (1-99 standard, 100-199 extended, 1000-1999 extended).", prompt: promptFor(dev, sess) };
       }
       dev.acl = dev.acl || { lists: {} };
       dev.acl.lists[String(aclNum)] = dev.acl.lists[String(aclNum)] || { id: String(aclNum), name: "", rules: [] };
@@ -1269,7 +1296,7 @@ function execLine(ctx, rawLine) {
       if (!dev.dhcp) dev.dhcp = { enabled: false, pools: {}, excluded: [], bindings: {} };
       if (_no()) { delete dev.dhcp.pools[_pt[3]]; return { output: "", prompt: promptFor(dev, sess) }; }
       var pname = _pt[3];
-      if (!pname) return { output: "% 用法：ip dhcp pool <名字>", prompt: promptFor(dev, sess) };
+      if (!pname) return { output: "% Usage: ip dhcp pool <name>", prompt: promptFor(dev, sess) };
       dev.dhcp.pools[pname] = dev.dhcp.pools[pname] || { name: pname, lease: 3600 };
       dev.dhcp.enabled = true;
       enterMode(sess, "dhcp-pool");
@@ -1281,18 +1308,19 @@ function execLine(ctx, rawLine) {
       if (!dev.dhcp) dev.dhcp = { enabled: false, pools: {}, excluded: [], bindings: {} };
       if (_no()) { dev.dhcp.excluded = []; return { output: "", prompt: promptFor(dev, sess) }; }
       var exs = _pt[3], exe = _pt[4];
-      if (!exs) return { output: "% 用法：ip dhcp excluded-address <起始IP> [结束IP]", prompt: promptFor(dev, sess) };
+      if (!exs) return { output: "% Usage: ip dhcp excluded-address <start-ip> [end-ip]", prompt: promptFor(dev, sess) };
       if (exe) {
         var a = S().ipToInt(exs), b = S().ipToInt(exe);
-        if (a === null || b === null) return { output: "% IP 格式错误", prompt: promptFor(dev, sess) };
+        if (a === null || b === null) return { output: "% Invalid IP address.", prompt: promptFor(dev, sess) };
         for (var q = Math.min(a, b); q <= Math.max(a, b); q++) dev.dhcp.excluded.push(S().intToIp(q));
       } else dev.dhcp.excluded.push(exs);
       return { output: "", prompt: promptFor(dev, sess) };
     }
     // vlan XX
     if (matchPattern([toks[0]], ["vlan"]) && toks.length === 2 && /^\d+$/.test(toks[1])) {
+      var _vNew = !(dev.vlans && dev.vlans[toks[1]]);
       Sim.ensureVlan(dev, toks[1]); enterMode(sess, "vlan"); sess.vlanId = toks[1];
-      return { output: "", prompt: promptFor(dev, sess) };
+      return { output: _vNew ? "VLAN " + toks[1] + " created." : "", prompt: promptFor(dev, sess) };
     }
     // interface X（支持 interface e1/0/1-4 / int vlan 20 / int g0/0）
     if (matchPattern([toks[0]], ["interface"]) && toks.length >= 2) {
@@ -1311,7 +1339,7 @@ function execLine(ctx, rawLine) {
         if (ports.indexOf(p) < 0) ports.push(p);
       });
       ports = ports.filter(function (p) { return dev.ports[p] || p.indexOf("vlan") === 0; });
-      if (!ports.length) return { output: "% 端口不存在（例：e1/0/1, e1/0/1-4, g0/0, s1/0, vlan10）", prompt: promptFor(dev, sess) };
+      if (!ports.length) return { output: "% Invalid port. Example: e1/0/1, e1/0/1-4, g0/0, s1/0, vlan10.", prompt: promptFor(dev, sess) };
       enterMode(sess, "if"); sess.ifPorts = ports;
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -1324,11 +1352,11 @@ function execLine(ctx, rawLine) {
       var mm = st.match(/^mst\s+(\d+)\s+priority\s+(\d+)$/i);
       if (mm) {
         var pri = parseInt(mm[2], 10);
-        if (pri % 4096 !== 0) return { output: "% 优先级必须为4096的倍数", prompt: promptFor(dev, sess) };
+        if (pri % 4096 !== 0) return { output: "% Priority must be a multiple of 4096.", prompt: promptFor(dev, sess) };
         dev.stp.priorities[mm[1]] = pri; dev.stp.priorities["0"] = dev.stp.priorities["0"] || 32768;
         ctx.refreshStp(); return { output: "", prompt: promptFor(dev, sess) };
       }
-      return { output: "% 未知spanning-tree命令（试试 spanning-tree ?）", prompt: promptFor(dev, sess) };
+      return { output: "% Unknown spanning-tree command. Type spanning-tree ? for help.", prompt: promptFor(dev, sess) };
     }
     // port-group N（创建）
     var pgm = line.match(/^port-group\s+(\d+)$/i);
@@ -1361,16 +1389,16 @@ function execLine(ctx, rawLine) {
     // 思科扩展：username xxx privilege <0-15> <口令>
     var upm = line.match(/^username\s+(\S+)\s+privilege\s+(\d+)\s+(0|7)\s+(\S+)$/i);
     if (upm) {
-      if (upm[1].length > 16) return { output: "% 用户名最长16字符", prompt: promptFor(dev, sess) };
+      if (upm[1].length > 16) return { output: "% Username must be at most 16 characters.", prompt: promptFor(dev, sess) };
       var priv = parseInt(upm[2], 10);
-      if (priv < 0 || priv > 15) return { output: "% 特权级别范围 0~15", prompt: promptFor(dev, sess) };
+      if (priv < 0 || priv > 15) return { output: "% Privilege level must be 0-15.", prompt: promptFor(dev, sess) };
       dev.users = dev.users.filter(function (u) { return u.name !== upm[1]; });
       dev.users.push({ name: upm[1], enc: upm[3], pass: upm[4], privilege: priv });
       return { output: "", prompt: promptFor(dev, sess) };
     }
     var um = line.match(/^username\s+(\S+)\s+password\s+(0|7)\s+(\S+)$/i);
     if (um) {
-      if (um[1].length > 16) return { output: "% 用户名最长16字符", prompt: promptFor(dev, sess) };
+      if (um[1].length > 16) return { output: "% Username must be at most 16 characters.", prompt: promptFor(dev, sess) };
       dev.users = dev.users.filter(function (u) { return u.name !== um[1]; });
       dev.users.push({ name: um[1], enc: um[2], pass: um[3], privilege: 1 });
       return { output: "", prompt: promptFor(dev, sess) };
@@ -1381,7 +1409,7 @@ function execLine(ctx, rawLine) {
     var ipm = line.match(/^ip\s+route\s+(\S+)\s+(\S+)\s+(\S+)(\s+(\d+))?$/i);
     if (ipm) {
       if (Sim.ipToInt(ipm[1]) === null || Sim.ipToInt(ipm[2]) === null || Sim.ipToInt(ipm[3]) === null)
-        return { output: "% IP/掩码格式错误", prompt: promptFor(dev, sess) };
+        return { output: "% Invalid IP/mask.", prompt: promptFor(dev, sess) };
       dev.staticRoutes.push({ dest: ipm[1], mask: ipm[2], nextHop: ipm[3], dist: ipm[5] ? parseInt(ipm[5], 10) : 1 });
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -1395,12 +1423,12 @@ function execLine(ctx, rawLine) {
         return { output: "", prompt: promptFor(dev, sess) };
       } else {
         var op = tail ? parseInt(tail, 10) : 1;
-        if (!(op >= 1 && op <= 65535)) return { output: "% OSPF进程号1-65535", prompt: promptFor(dev, sess) };
+        if (!(op >= 1 && op <= 65535)) return { output: "% OSPF process ID must be 1-65535.", prompt: promptFor(dev, sess) };
         dev.ospf.enabled = true; dev.ospf.proc = op; enterMode(sess, "ospf"); sess.ospfProc = op;
         return { output: "", prompt: promptFor(dev, sess) };
       }
     }
-    return { output: "% 未知命令（输入 ? 查看本模式命令，支持缩写如 conf t / int e1/0/1 / sh run）", prompt: promptFor(dev, sess) };
+    return { output: "% Unknown command. Type ? for a list (abbreviations: conf t / int e1/0/1 / sh run).", prompt: promptFor(dev, sess) };
   }
 
   // ===== 接口模式 =====
@@ -1412,7 +1440,7 @@ function execLine(ctx, rawLine) {
     if (smm) {
       var md = smm[1].toLowerCase();
       var full = ("access".indexOf(md) === 0) ? "access" : ("trunk".indexOf(md) === 0 ? "trunk" : null);
-      if (!full) return { output: "% 模式应为 access/trunk", prompt: promptFor(dev, sess) };
+      if (!full) return { output: "% Mode must be access or trunk.", prompt: promptFor(dev, sess) };
       eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].mode = full; if (full === "access" && !dev.ports[pn].accessVlan) dev.ports[pn].accessVlan = 1; } });
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -1420,14 +1448,19 @@ function execLine(ctx, rawLine) {
     var sam = line.match(/^swi\w*\s+acc\w*\s+(vlan\s+)?(\d+)$/i) || line.match(/^switchport\s+access\s+vlan\s+(\d+)$/i);
     if (sam) {
       var vid2 = sam[2] || sam[1];
-      eachPort(function (pn) { if (dev.ports[pn]) S().setAccessVlan(dev, pn, vid2); });
-      return { output: "", prompt: promptFor(dev, sess) };
+      var _acc = [];
+      eachPort(function (pn) {
+        if (!dev.ports[pn]) return;
+        S().setAccessVlan(dev, pn, vid2);
+        _acc.push("Port " + pn + " added to VLAN " + vid2 + ".");
+      });
+      return { output: _acc.join("\n"), prompt: promptFor(dev, sess) };
     }
     // switchport trunk allowed vlan（缩写 swi trunk allowed vlan 3;5-8）
     if (/^swi\w*\s+trunk\s+allowed\s+vlan/i.test(line) || /^switchport\s+trunk\s+allowed\s+vlan/i.test(line)) {
       var listStr = line.replace(/^.*vlan\s*/i, "");
       var list = parseVlanList(listStr);
-      if (!list) return { output: "% vlan列表格式如 3;5-8", prompt: promptFor(dev, sess) };
+      if (!list) return { output: "% Invalid VLAN list. Example: 3;5-8.", prompt: promptFor(dev, sess) };
       eachPort(function (pn) { if (dev.ports[pn]) { dev.ports[pn].mode = "trunk"; dev.ports[pn].trunkAllowed = list; } });
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -1440,7 +1473,7 @@ function execLine(ctx, rawLine) {
       var mmac = tail2.match(/^(mac-add\w*|mac-address)\s+(\S+)$/i);
       if (mmac) {
         var nm = S().normMac(mmac[2]);
-        if (!nm) return { output: "% MAC格式如 XX-XX-XX-XX-XX-XX", prompt: promptFor(dev, sess) };
+        if (!nm) return { output: "% Invalid MAC address. Example: XX-XX-XX-XX-XX-XX.", prompt: promptFor(dev, sess) };
         eachPort(function (pn) {
           if (!dev.ports[pn]) return;
           var p = dev.ports[pn];
@@ -1461,7 +1494,7 @@ function execLine(ctx, rawLine) {
         });
         return { output: "", prompt: promptFor(dev, sess) };
       }
-      return { output: "% 用法：swi port-sec [maximum N | mac-add XX | violation shutdown|protect|restrict [recovery N]]", prompt: promptFor(dev, sess) };
+      return { output: "% Usage: swi port-sec [maximum N | mac-add XX | violation shutdown|protect|restrict [recovery N]]", prompt: promptFor(dev, sess) };
     }
     // ===== DCN 企业级特性：接口模式 =====
     var _it = tokensOf(line);
@@ -1491,7 +1524,7 @@ function execLine(ctx, rawLine) {
     // QoS 优先级：swi priority 5 / swi cos 5
     if ((ipt("switchport priority") || ipt("switchport cos")) && /^\d/.test(_itp[2] || "")) {
       var pri = parseInt(_itp[2], 10);
-      if (pri < 0 || pri > 7) return { output: "% 优先级范围 0~7（802.1p）", prompt: promptFor(dev, sess) };
+      if (pri < 0 || pri > 7) return { output: "% Priority must be 0-7 (802.1p).", prompt: promptFor(dev, sess) };
       if (_ifNo) { eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].qosPrio = 0; }); }
       else eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].qosPrio = pri; });
       return { output: "", prompt: promptFor(dev, sess) };
@@ -1500,7 +1533,7 @@ function execLine(ctx, rawLine) {
     if (ipt("ip helper-address")) {
       var helperIp = _itp[2];
       if (!helperIp || S().ipToInt(helperIp) === null) {
-        return { output: "% 用法：ip helper-address <DHCP服务器IP>", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: ip helper-address <dhcp-server-ip>", prompt: promptFor(dev, sess) };
       }
       if (!dev.ipHelper) dev.ipHelper = { enabled: false, servers: [], perIf: {} };
       dev.ipHelper.enabled = true;
@@ -1579,7 +1612,7 @@ function execLine(ctx, rawLine) {
     if (ipt("vrrp")) {
       var vrid = _itp[1];
       if (!/^\d+$/.test(String(vrid))) {
-        return { output: "% 用法：vrrp <组号> ip <虚拟IP> | vrrp <组号> priority <1-254> | vrrp <组号> timers advertise <秒> hold <秒>", prompt: promptFor(dev, sess) };
+        return { output: "% Usage: vrrp <group> ip <virtual-ip> | vrrp <group> priority <1-254> | vrrp <group> timers advertise <sec> hold <sec>", prompt: promptFor(dev, sess) };
       }
       if (!dev.vrrp) dev.vrrp = { groups: {} };
       var vg = dev.vrrp.groups[String(vrid)] = dev.vrrp.groups[String(vrid)] || {
@@ -1635,7 +1668,7 @@ function execLine(ctx, rawLine) {
     }
     if (ipt("duplex")) {
       var dx = _itp[1];
-      if (!/^(auto|full|half)$/i.test(dx)) return { output: "% 双工：auto / full / half", prompt: promptFor(dev, sess) };
+      if (!/^(auto|full|half)$/i.test(dx)) return { output: "% Invalid duplex. Use auto / full / half.", prompt: promptFor(dev, sess) };
       eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].duplex = dx.toLowerCase(); });
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -1672,9 +1705,9 @@ function execLine(ctx, rawLine) {
     // 注意：必须排在下面的 dot1x 之前，否则会被 ipt("dot1x") 提前拦截
     if (ipt("dot1x authenticate")) {
       var authMac = _itp[2];
-      if (!authMac) return { output: "% 用法：dot1x authenticate <MAC地址>", prompt: promptFor(dev, sess) };
+      if (!authMac) return { output: "% Usage: dot1x authenticate <mac-address>", prompt: promptFor(dev, sess) };
       var nmAuth = S().normMac(authMac);
-      if (!nmAuth) return { output: "% MAC 格式如 XX-XX-XX-XX-XX-XX", prompt: promptFor(dev, sess) };
+      if (!nmAuth) return { output: "% Invalid MAC address. Example: XX-XX-XX-XX-XX-XX.", prompt: promptFor(dev, sess) };
       eachPort(function (pn) { if (dev.ports[pn]) dev.ports[pn].dot1xAuth = true; });
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -1690,7 +1723,7 @@ function execLine(ctx, rawLine) {
     }
     // 端口速率限制：swi speed limit 1000 / switchport rate-limit 1000
     if ((ipt("switchport speed limit") || ipt("switchport rate-limit") || ipt("switchport speed")) && /^\d/.test(_itp[2] || "")) {
-      return { output: "% 端口限速已生效：" + _itp[2] + " kbps（仿真不改变转发速率）", prompt: promptFor(dev, sess) };
+      return { output: "% Port rate limit applied: " + _itp[2] + " kbps（仿真不改变转发速率）", prompt: promptFor(dev, sess) };
     }
     // shutdown / no shutdown（真机缩写：任意唯一前缀 shut/shutd/shutdown，no shut 同理）
     var _t = tokensOf(line);
@@ -1704,7 +1737,7 @@ function execLine(ctx, rawLine) {
     // ip address / ip add / ip addr 都能识别
     var iam = line.match(/^ip\s+(add(?:r(?:ess)?)?)\s+(\S+)\s+(\S+)(\s+secondary)?$/i);
     if (iam) {
-      if (S().ipToInt(iam[2]) === null || S().ipToInt(iam[3]) === null) return { output: "% IP/掩码错误", prompt: promptFor(dev, sess) };
+      if (S().ipToInt(iam[2]) === null || S().ipToInt(iam[3]) === null) return { output: "% Invalid IP/mask.", prompt: promptFor(dev, sess) };
       var isSecondary = !!iam[4];
       ports.forEach(function (pn) {
         if (pn.indexOf("vlan") === 0) {
@@ -1763,7 +1796,7 @@ function execLine(ctx, rawLine) {
     // authentication securityip
     var secm = line.match(/^authentication\s+securityip\s+(\S+)$/i);
     if (secm) {
-      if (S().ipToInt(secm[1]) === null) return { output: "% IP格式错误", prompt: promptFor(dev, sess) };
+      if (S().ipToInt(secm[1]) === null) return { output: "% Invalid IP address.", prompt: promptFor(dev, sess) };
       dev.telnet.securityIp = secm[1]; dev.ssh.securityIp = secm[1];
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -1783,7 +1816,7 @@ function execLine(ctx, rawLine) {
     var lbNum = pglb[1], lbAlgo = pglb[2].toLowerCase();
     var lbOk = ["src-dst-ip", "src-dst-mac", "src-dst-port", "dst-ip", "dst-mac", "dst-port", "src-ip", "src-mac"];
     if (lbOk.indexOf(lbAlgo) < 0) {
-      return { output: "% 负载分担算法：" + lbOk.join(" / "), prompt: promptFor(dev, sess) };
+      return { output: "% Invalid load-balance method: " + lbOk.join(" / "), prompt: promptFor(dev, sess) };
     }
     if (!dev.portGroups[lbNum]) dev.portGroups[lbNum] = { mode: "on", ports: [] };
     dev.portGroups[lbNum].loadBalance = lbAlgo;
@@ -1817,7 +1850,7 @@ function execLine(ctx, rawLine) {
       sub.dev = dev; sub.sess = sess;
       return execLine(sub, line);
     }
-    return { output: "% 未知接口命令（输入 ? 查看；支持缩写如 swi mode acc / no shut / ip add）", prompt: promptFor(dev, sess) };
+    return { output: "% Unknown interface command. Type ? for help (abbreviations: swi mode acc / no shut / ip add).", prompt: promptFor(dev, sess) };
   }
 
   // ===== route-map 配置模式（策略路由）=====
@@ -1838,7 +1871,7 @@ function execLine(ctx, rawLine) {
       cl2.set = stM[1].trim();
       return { output: "", prompt: promptFor(dev, sess) };
     }
-    return { output: "% route-map模式：match <条件> / set <下一跳> / exit", prompt: promptFor(dev, sess) };
+    return { output: "% route-map mode: match <condition> / set <next-hop> / exit", prompt: promptFor(dev, sess) };
   }
   // ===== vlan配置模式 =====
   if (sess.mode === "vlan") {
@@ -1851,14 +1884,22 @@ function execLine(ctx, rawLine) {
     }
     var swm = line.match(/^(switchport\s+interface|swi\w*\s+int\w*)\s+(.+)$/i);
     if (swm) {
-      var plist = [];
+      var plist = [], badp = [];
       swm[2].split(/[;,]/).forEach(function (pp) {
-        S().expandPortRange(pp.trim()).forEach(function (p) { plist.push(p); });
+        var one = S().expandPortRange(pp.trim());
+        if (!one.length) badp.push(pp.trim());
+        one.forEach(function (p) { plist.push(p); });
       });
-      plist.forEach(function (p) { if (dev.ports[p]) S().setAccessVlan(dev, p, sess.vlanId); });
-      return { output: "", prompt: promptFor(dev, sess) };
+      var vlines = [];
+      plist.forEach(function (p) {
+        if (!dev.ports[p]) { badp.push(p); return; }
+        S().setAccessVlan(dev, p, sess.vlanId);
+        vlines.push("Port " + p + " added to VLAN " + sess.vlanId + ".");
+      });
+      badp.forEach(function (p) { vlines.push("% Invalid port: " + p); });
+      return { output: vlines.join("\n"), prompt: promptFor(dev, sess) };
     }
-    return { output: "% vlan模式：name / switchport interface（?查看）", prompt: promptFor(dev, sess) };
+    return { output: "% vlan mode: name / switchport interface (type ? for help)", prompt: promptFor(dev, sess) };
   }
   // ===== ACL 配置模式 =====
   if (sess.mode === "acl") {
@@ -1922,7 +1963,7 @@ function execLine(ctx, rawLine) {
       lst.rules.sort(function (a, b) { return a.seq - b.seq; });
       return { output: "", prompt: promptFor(dev, sess) };
     }
-    return { output: "% ACL模式：seq <n> permit|deny <proto> <src> <dst> [eq <port>] [log] / remark <描述> / exit", prompt: promptFor(dev, sess) };
+    return { output: "% ACL mode: seq <n> permit|deny <proto> <src> <dst> [eq <port>] [log] / remark <text> / exit", prompt: promptFor(dev, sess) };
   }
   // ===== DHCP pool 配置模式 =====
   if (sess.mode === "dhcp-pool") {
@@ -1940,7 +1981,7 @@ function execLine(ctx, rawLine) {
     if (rg3) { pool.start = rg3[1]; pool.end = rg3[2]; return { output: "", prompt: promptFor(dev, sess) }; }
     var vl3 = line.match(/^vlan\s+(\d+)$/i);
     if (vl3) { pool.vlan = parseInt(vl3[1], 10); return { output: "", prompt: promptFor(dev, sess) }; }
-    return { output: "% DHCP池模式：network <网段> <掩码> / default-router <网关> / dns-server <IP> / lease <秒> / range <起> <止> / exit", prompt: promptFor(dev, sess) };
+    return { output: "% DHCP pool mode: network <subnet> <mask> / default-router <gateway> / dns-server <ip> / lease <seconds> / range <start> <end> / exit", prompt: promptFor(dev, sess) };
   }
   // ===== mstp region =====
   if (sess.mode === "mstp") {
@@ -1954,11 +1995,11 @@ function execLine(ctx, rawLine) {
     var im = line.match(/^instance\s+(\d+)\s+vlan\s+(.+)$/i);
     if (im) {
       var inst = im[1], vlist = parseVlanList(im[2].replace(/,/g, ";"));
-      if (!vlist) return { output: "% vlan列表如 10;20", prompt: promptFor(dev, sess) };
+      if (!vlist) return { output: "% Invalid VLAN list. Example: 10;20.", prompt: promptFor(dev, sess) };
       dev.stp.instances[inst] = vlist; dev.stp.enabled = true; ctx.refreshStp();
       return { output: "", prompt: promptFor(dev, sess) };
     }
-    return { output: "% 用法：name <区域名> / instance <号> vlan <列表>", prompt: promptFor(dev, sess) };
+    return { output: "% Usage: name <region-name> / instance <id> vlan <list>", prompt: promptFor(dev, sess) };
   }
   // ===== rip =====
   if (sess.mode === "rip") {
@@ -1995,7 +2036,7 @@ function execLine(ctx, rawLine) {
     if (nwm2 && nwm2[1].toLowerCase() !== "vlan") {
       var ripNet = nwm2[1], ripMask = nwm2[3] || "255.255.255.0";
       if (S().ipToInt(ripNet) === null) {
-        return { output: "% network 格式如 network 10.1.0.0 255.255.255.0", prompt: promptFor(dev, sess) };
+        return { output: "% Invalid network. Example: network 10.1.0.0 255.255.255.0", prompt: promptFor(dev, sess) };
       }
       dev.rip.networks.push({ net: ripNet, mask: ripMask });
       dev.rip.enabled = true;
@@ -2005,14 +2046,14 @@ function execLine(ctx, rawLine) {
     if (pi2) { var pp2 = S().normalizePort(pi2[1]); if (pp2) dev.rip.passiveIfs[pp2] = true; return { output: "", prompt: promptFor(dev, sess) }; }
     // 允许在rip模式直接 interface xxx（跳回global处理）
     if (/^interface\b/i.test(line)) { enterMode(sess, "global"); return execLine(ctx, line); }
-    return { output: "% rip模式：version 2 / auto-summary / network vlan X / passive-interface（?查看）", prompt: promptFor(dev, sess) };
+    return { output: "% rip mode: version 2 / auto-summary / network vlan X / passive-interface (type ? for help)", prompt: promptFor(dev, sess) };
   }
   // ===== ospf =====
   if (sess.mode === "ospf") {
     if (/^auto-cost\s+reference-bandwidth\s+(\d+)$/i.test(line)) {
       var bwM = line.match(/^auto-cost\s+reference-bandwidth\s+(\d+)$/i);
       var bw = parseInt(bwM[1], 10);
-      if (isNaN(bw) || bw <= 0) return { output: "% 参考带宽需为正整数（Mbit）", prompt: promptFor(dev, sess) };
+      if (isNaN(bw) || bw <= 0) return { output: "% Reference bandwidth must be a positive integer (Mbit).", prompt: promptFor(dev, sess) };
       dev.ospf.referenceBandwidth = bw;
       return { output: "", prompt: promptFor(dev, sess) };
     }
@@ -2031,22 +2072,22 @@ function execLine(ctx, rawLine) {
     }
     var rid = line.match(/^router-id\s+(\S+)$/i);
     if (rid) {
-      if (S().ipToInt(rid[1]) === null) return { output: "% router-id格式 X.X.X.X", prompt: promptFor(dev, sess) };
+      if (S().ipToInt(rid[1]) === null) return { output: "% Invalid router-id. Example: 1.1.1.1", prompt: promptFor(dev, sess) };
       dev.ospf.routerId = rid[1]; return { output: "", prompt: promptFor(dev, sess) };
     }
     var netm = line.match(/^network\s+(\S+)\s+(\S+)\s+area\s+(\d+)$/i);
     if (netm) {
-      if (S().ipToInt(netm[1]) === null || S().ipToInt(netm[2]) === null) return { output: "% network格式：network 网段 掩码 area 号", prompt: promptFor(dev, sess) };
+      if (S().ipToInt(netm[1]) === null || S().ipToInt(netm[2]) === null) return { output: "% Invalid network. Example: network 10.1.0.0 255.255.255.0 area 0", prompt: promptFor(dev, sess) };
       var areaId = parseInt(netm[3], 10);
     dev.ospf.networks.push({ net: netm[1], mask: netm[2], area: isNaN(areaId) ? netm[3] : areaId });
     // 记录已配置的 area，便于 show ip ospf 展示
     if (dev.ospf.areas.indexOf(String(netm[3])) < 0) dev.ospf.areas.push(String(netm[3]));
       return { output: "", prompt: promptFor(dev, sess) };
     }
-    return { output: "% ospf模式：router-id / network 网段 掩码 area 号", prompt: promptFor(dev, sess) };
+    return { output: "% ospf mode: router-id / network <subnet> <mask> area <id>", prompt: promptFor(dev, sess) };
   }
 
-  return { output: "% 未知命令（?查看，TAB补全，支持缩写）", prompt: promptFor(dev, sess) };
+  return { output: "% Unknown command. Type ? for help (TAB completes, abbreviations supported).", prompt: promptFor(dev, sess) };
 }
 
 function parseVlanList(s) {
@@ -2066,11 +2107,11 @@ function parseMonitor(dev, line) {
   // monitor session 1 source int e1/0/2 both
   // monitor session 1 destination int e1/0/1
   var m = line.match(/^monitor\s+session\s+(\d+)\s+(source|destination)\s+(?:int\w*\s+|interface\s+)?(\S+)(?:\s+(rx|tx|both))?$/i);
-  if (!m) return { err: "% 用法：monitor session <1-100> source|destination interface <口> [rx|tx|both]" };
+  if (!m) return { err: "% Usage: monitor session <1-100> source|destination interface <port> [rx|tx|both]" };
   var id = m[1], dir = m[2].toLowerCase(), portRaw = m[3], flow = (m[4] || "both").toLowerCase();
   var Sim = S();
   var pn = Sim.normalizePort(portRaw);
-  if (!pn || !dev.ports[pn]) return { err: "% 端口不存在" };
+  if (!pn || !dev.ports[pn]) return { err: "% Invalid port." };
   if (!dev.monitor[id]) dev.monitor[id] = { sources: [], dest: null };
   if (dir === "source") dev.monitor[id].sources.push({ port: pn, dir: flow });
   else dev.monitor[id].dest = pn;
