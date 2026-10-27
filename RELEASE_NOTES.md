@@ -1,3 +1,18 @@
+## Digital China DCN Network Simulator v1.4.1
+
+### Download
+
+- `DCN-Network-Simulator-1.4.1-portable.exe` — single-file portable build for Windows 64-bit
+
+### What's new in 1.4.1
+
+- **`ipconfig` 只显示已配置项**：PC 没有默认网关时不再打印 `Gateway: -`，只输出 IP 与掩码，避免误以为地址没配上。
+- 载入实验时的 PC 地址预配保持不变（所有实验的 PC 都会写入 IP，纯二层实验不写网关）。
+
+### Verification
+
+- `node ../simtest/run-dcn-tests.js` → 1250 passed / 0 failed
+
 ## Digital China DCN Network Simulator v1.4.0
 
 Command-line feedback, English diagnostics and laboratory address pre-configuration.

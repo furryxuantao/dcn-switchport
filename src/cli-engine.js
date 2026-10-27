@@ -512,9 +512,14 @@ function execLine(ctx, rawLine) {
     if ("ipconfig".indexOf(head) === 0) {
       var all = toks.length >= 2 && /^\/?a(ll)?$/i.test(toks[1]);
       if (all) {
-        return { output: "IP Address: " + (dev.pcIp || "(not configured)") + "\nSubnet Mask: " + (dev.pcMask || "-") + "\nGateway: " + (dev.pcGw || "-") + "\nMAC: " + dev.pcMac, prompt: promptFor(dev, sess) };
+        var _cfg = "IP Address: " + (dev.pcIp || "(not configured)") + "\nSubnet Mask: " + (dev.pcMask || "255.255.255.0");
+        if (dev.pcGw) _cfg += "\nGateway: " + dev.pcGw;
+        if (dev.pcMac) _cfg += "\nMAC: " + dev.pcMac;
+        return { output: _cfg, prompt: promptFor(dev, sess) };
       }
-      return { output: "IP Address: " + (dev.pcIp || "(not configured)") + "\nSubnet Mask: " + (dev.pcMask || "-") + "\nGateway: " + (dev.pcGw || "-"), prompt: promptFor(dev, sess) };
+      var _cfg2 = "IP Address: " + (dev.pcIp || "(not configured)") + "\nSubnet Mask: " + (dev.pcMask || "255.255.255.0");
+      if (dev.pcGw) _cfg2 += "\nGateway: " + dev.pcGw;
+      return { output: _cfg2, prompt: promptFor(dev, sess) };
     }
     if ("ping".indexOf(head) === 0 && head.length >= 2) {
       var ip = toks[1];
